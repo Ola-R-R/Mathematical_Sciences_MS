@@ -1,0 +1,725 @@
+---
+output: 
+  html_document: 
+    fig_width: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(ggspatial)
+library(geoR)
+library(akima)
+library(fields)
+library(sp)
+library(raster)
+library(scales)
+library(haven)
+library(mnormt)
+library(plotly)
+library(rayshader)
+library(gridExtra)
+library(forecast)
+library(viridis)
+library(plot3D)
+library(demogR)
+```
+
+# Problem 1
+
+## a)
+
+```{r}
+h = seq(0, 1e2, 1e-2)
+
+# My cov.spatial function that uses the parametrizations from the slides
+my.cov.spatial <- function(h, cov.model, cov.pars, kappa) {
+  if (cov.model == "matern") return(cov.spatial(h, cov.model, c(cov.pars[1], cov.pars[2]/(sqrt(8 * kappa))), kappa))
+  if (cov.model == "exponential") return(cov.spatial(h, cov.model, cov.pars))
+  if (cov.model == "powered.exponential") return(cov.spatial(h, cov.model, cov.pars, kappa))
+  return(cat("Invalid covariance model. Please use 'matern', 'exponential' or 'powered.exponential'"))
+}
+
+# Function that plots the correlation function given distance h
+my.cov.spatial.corr.plot <- function(h, cov.model, cov.pars, kappa) {
+  df <- data.frame(h = h, corr = my.cov.spatial(h, cov.model, cov.pars, kappa))
+  
+  return(ggplot(df) +
+           geom_line(aes(x = h, y = corr), show.legend = F, linewidth = 1.5) +
+           labs(x = "Distance", y = "Correlation") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+# Function that plots the semi-variogram function given distance h
+my.cov.spatial.semi.var.plot <- function(h, cov.model, cov.pars, kappa) {
+  semi.var <- my.cov.spatial(0, cov.model, cov.pars, kappa) - my.cov.spatial(h, cov.model, cov.pars, kappa)
+  df <- data.frame(h = h, semi.variance = semi.var)
+  
+  return(ggplot(df) +
+           geom_line(aes(x = h, y = semi.variance), show.legend = F, linewidth = 1.5) +
+           labs(x = "Distance", y = "Semi-variance") +
+           scale_y_continuous(labels = comma_format(.01)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+p.e.power.1.scale.10.corr.plot <- my.cov.spatial.corr.plot(h, "powered.exponential", c(1, 10), 1)
+p.e.power.1.9.scale.1.9.corr.plot <- my.cov.spatial.corr.plot(h, "powered.exponential", c(1, 1.9), 1.9)
+m.smooth.1.range.20.corr.plot <- my.cov.spatial.corr.plot(h, "matern", c(1, 20), 1)
+m.smooth.3.range.20.corr.plot <- my.cov.spatial.corr.plot(h, "matern", c(1, 20), 3)
+
+p.e.power.1.scale.10.corr.plot
+p.e.power.1.9.scale.1.9.corr.plot
+m.smooth.1.range.20.corr.plot
+m.smooth.3.range.20.corr.plot
+
+p.e.power.1.scale.10.marginal.1.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "powered.exponential", c(1, 10), 1)
+p.e.power.1.scale.10.marginal.5.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "powered.exponential", c(5, 10), 1)
+p.e.power.1.9.scale.1.9.marginal.1.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "powered.exponential", c(1, 1.9), 1.9)
+p.e.power.1.9.scale.1.9.marginal.5.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "powered.exponential", c(5, 1.9), 1.9)
+m.smooth.1.range.20.marginal.1.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "matern", c(1, 20), 1)
+m.smooth.1.range.20.marginal.5.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "matern", c(5, 20), 1)
+m.smooth.3.range.20.marginal.1.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "matern", c(1, 20), 3)
+m.smooth.3.range.20.marginal.5.semi.var.plot <- my.cov.spatial.semi.var.plot(h, "matern", c(5, 20), 3)
+
+p.e.power.1.scale.10.marginal.1.semi.var.plot
+p.e.power.1.scale.10.marginal.5.semi.var.plot
+p.e.power.1.9.scale.1.9.marginal.1.semi.var.plot
+p.e.power.1.9.scale.1.9.marginal.5.semi.var.plot
+m.smooth.1.range.20.marginal.1.semi.var.plot
+m.smooth.1.range.20.marginal.5.semi.var.plot
+m.smooth.3.range.20.marginal.1.semi.var.plot
+m.smooth.3.range.20.marginal.5.semi.var.plot
+
+fig.width <- 7
+fig.height <- 3.5
+
+# ggsave("Figs/Problem 1/a)/p.e.power.1.scale.10.corr.plot.png", p.e.power.1.scale.10.corr.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/p.e.power.1.9.scale.1.9.corr.plot.png", p.e.power.1.9.scale.1.9.corr.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.1.range.20.corr.plot.png", m.smooth.1.range.20.corr.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.3.range.20.corr.plot.png", m.smooth.3.range.20.corr.plot, width = fig.width, height = fig.height)
+
+# ggsave("Figs/Problem 1/a)/p.e.power.1.scale.10.marginal.1.semi.var.plot.png", p.e.power.1.scale.10.marginal.1.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/p.e.power.1.scale.10.marginal.5.semi.var.plot.png", p.e.power.1.scale.10.marginal.5.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/p.e.power.1.9.scale.1.9.marginal.1.semi.var.plot.png", p.e.power.1.9.scale.1.9.marginal.1.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/p.e.power.1.9.scale.1.9.marginal.5.semi.var.plot.png", p.e.power.1.9.scale.1.9.marginal.5.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.1.range.20.marginal.1.semi.var.plot.png", m.smooth.1.range.20.marginal.1.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.1.range.20.marginal.5.semi.var.plot.png", m.smooth.1.range.20.marginal.5.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.3.range.20.marginal.1.semi.var.plot.png", m.smooth.3.range.20.marginal.1.semi.var.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/a)/m.smooth.3.range.20.marginal.5.semi.var.plot.png", m.smooth.3.range.20.marginal.5.semi.var.plot, width = fig.width, height = fig.height)
+```
+
+## b)
+
+```{r}
+# Defining the regular grid
+D <- 1:50
+
+# Function that calculates the covariance matrix of X
+my.cov.X <- function(D, cov.model, cov.pars, kappa) {
+  covariance <- matrix(nrow = length(D), ncol = length(D))
+  
+  for (i in 1:length(D)) {
+    covariance[i, i] <- my.cov.spatial(abs(D[i] - D[i]), cov.model, cov.pars, kappa)
+    for (j in (1:length(D))[-(1:i)]) {
+      covariance[i, j] <- covariance[j, i] <- my.cov.spatial(abs(D[i] - D[j]), cov.model, cov.pars, kappa)
+    }
+  }
+  
+  return(covariance)
+}
+
+# Function that creates n realizations of X
+my.sim.X <- function(D, cov.model, cov.pars, kappa, n, seed = cov.pars[1]) {
+  df <- data.frame(D = rep(D,n), Value = NA, Realization = as.factor(rep(1:n, each = length(D))))
+  mu <- rep(0, length(D))
+  Sigma <- my.cov.X(D, cov.model, cov.pars, kappa)
+  
+  set.seed(seed)
+  for (i in 1:n) df[df$Realization == i,]$Value <- mvrnorm(1, mu, Sigma)
+  
+  return(df)
+}
+
+# Function that plots the n realizations of X
+my.sim.X.plot <- function(D, cov.model, cov.pars, kappa, n) {
+  df <- my.sim.X(D, cov.model, cov.pars, kappa, n)
+  return(ggplot(df) +
+           geom_line(aes(x = D, y = Value, color = Realization)) +
+           labs(x = "Location", y = "Value", color = "Realization") +
+           ylim(-8, 8) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+p.e.power.1.scale.10.marginal.1.realizations.4.plot <- my.sim.X.plot(D, "powered.exponential", c(1, 10), 1, 4)
+p.e.power.1.scale.10.marginal.5.realizations.4.plot <- my.sim.X.plot(D, "powered.exponential", c(5, 10), 1, 4)
+p.e.power.1.9.scale.1.9.marginal.1.realizations.4.plot <- my.sim.X.plot(D, "powered.exponential", c(1, 1.9), 1.9, 4)
+p.e.power.1.9.scale.1.9.marginal.5.realizations.4.plot <- my.sim.X.plot(D, "powered.exponential", c(5, 1.9), 1.9, 4)
+m.smooth.1.range.20.marginal.1.realizations.4.plot <- my.sim.X.plot(D, "matern", c(1, 20), 1, 4)
+m.smooth.1.range.20.marginal.5.realizations.4.plot <- my.sim.X.plot(D, "matern", c(5, 20), 1, 4)
+m.smooth.3.range.20.marginal.1.realizations.4.plot <- my.sim.X.plot(D, "matern", c(1, 20), 3, 4)
+m.smooth.3.range.20.marginal.5.realizations.4.plot <- my.sim.X.plot(D, "matern", c(5, 20), 3, 4)
+
+p.e.power.1.scale.10.marginal.1.realizations.4.plot
+p.e.power.1.scale.10.marginal.5.realizations.4.plot
+p.e.power.1.9.scale.1.9.marginal.1.realizations.4.plot
+p.e.power.1.9.scale.1.9.marginal.5.realizations.4.plot
+m.smooth.1.range.20.marginal.1.realizations.4.plot
+m.smooth.1.range.20.marginal.5.realizations.4.plot
+m.smooth.3.range.20.marginal.1.realizations.4.plot
+m.smooth.3.range.20.marginal.5.realizations.4.plot
+
+fig.width <- 7
+fig.height <- 3.5
+
+# ggsave("Figs/Problem 1/b)/p.e.power.1.scale.10.marginal.1.realizations.4.plot.png", p.e.power.1.scale.10.marginal.1.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/p.e.power.1.scale.10.marginal.5.realizations.4.plot.png", p.e.power.1.scale.10.marginal.5.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/p.e.power.1.9.scale.1.9.marginal.1.realizations.4.plot.png", p.e.power.1.9.scale.1.9.marginal.1.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/p.e.power.1.9.scale.1.9.marginal.5.realizations.4.plot.png", p.e.power.1.9.scale.1.9.marginal.5.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/m.smooth.1.range.20.marginal.1.realizations.4.plot.png", m.smooth.1.range.20.marginal.1.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/m.smooth.1.range.20.marginal.5.realizations.4.plot.png", m.smooth.1.range.20.marginal.5.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/m.smooth.3.range.20.marginal.1.realizations.4.plot.png", m.smooth.3.range.20.marginal.1.realizations.4.plot, width = fig.width, height = fig.height)
+# ggsave("Figs/Problem 1/b)/m.smooth.3.range.20.marginal.5.realizations.4.plot.png", m.smooth.3.range.20.marginal.5.realizations.4.plot, width = fig.width, height = fig.height)
+```
+
+## d)
+
+```{r}
+s <- c(10, 25, 30)
+y <- my.sim.X(D, "matern", c(5, 20), 3, 1)[s, "Value"]
+
+my.cov.Y <- function(D, cov.model, cov.pars, kappa, nugget) {
+  covariance <- matrix(nrow = length(D), ncol = length(D))
+  
+  for (i in 1:length(D)) {
+    covariance[i, i] <- my.cov.spatial(abs(D[i] - D[i]), cov.model, cov.pars, kappa)
+    for (j in (1:length(D))[-(1:i)]) {
+      covariance[i, j] <- covariance[j, i] <- my.cov.spatial(abs(D[i] - D[j]), cov.model, cov.pars, kappa)
+    }
+  }
+  
+  return(covariance + nugget * diag(1, length(D), length(D)))
+}
+
+my.cond.mean.X_Y <- function(D, s, y, cov.model, cov.pars, kappa, nugget) {
+  cov.Y <- my.cov.Y(s, cov.model, cov.pars, kappa, nugget)
+  cov.X_Y <- my.cov.X(D, cov.model, cov.pars, kappa)[, s]
+  return(cov.X_Y %*% solve(cov.Y) %*% y)
+}
+
+my.cond.cov.X_Y <- function(D, s, cov.model, cov.pars, kappa, nugget) {
+  cov.X <- my.cov.X(D, cov.model, cov.pars, kappa)
+  cov.Y <- my.cov.Y(s, cov.model, cov.pars, kappa, nugget)
+  cov.X_Y <- cov.X[, s]
+  return(cov.X - cov.X_Y %*% solve(cov.Y) %*% t(cov.X_Y))
+}
+
+my.pred.pred_int.plot <- function(D, s, y, cov.model, cov.pars, kappa, nugget, level = 10) {
+  z <- qnorm(1 - level/200)
+  mean <- my.cond.mean.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget)
+  Sigma <- my.cond.cov.X_Y(D, s, cov.model, cov.pars, kappa, nugget)
+  df <- data.frame(D = D, pred = mean, lower = mean - z * sqrt(diag(Sigma)),upper = mean + z * sqrt(diag(Sigma)))
+  observed <- data.frame(D = D[s], y = y)
+  
+  return(ggplot(df, aes(x = D)) +
+           geom_ribbon(aes(ymin = lower, ymax = upper), fill = "#1b98e0", alpha = .2) +
+           geom_line(aes(y = pred), linewidth = 1.25) +
+           geom_line(aes(y = lower), df, color = "blue", linetype = "dashed", linewidth = 1.25) +
+           geom_line(aes(y = upper), df, color = "blue", linetype = "dashed", linewidth = 1.25) +
+           geom_point(aes(x = D, y = y), observed, color = "red", size = 2, show.legend = F) +
+           labs(x = "Location", y = "Value") +
+           ylim(c(-8, 8)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+pred.pred_int.nugget.0.plot <- my.pred.pred_int.plot(D, s, y, "matern", c(5, 20), 3, 0)
+pred.pred_int.nugget.0.25.plot <- my.pred.pred_int.plot(D, s, y, "matern", c(5, 20), 3, .25)
+
+pred.pred_int.nugget.0.plot
+pred.pred_int.nugget.0.25.plot
+
+fig.width <- 7
+fig.height <- 3.5
+
+ggsave("Figs/Problem 1/d)/pred.pred_int.nugget.0.plot.png", pred.pred_int.nugget.0.plot, width = fig.width, height = fig.height)
+ggsave("Figs/Problem 1/d)/pred.pred_int.nugget.0.25.plot.png", pred.pred_int.nugget.0.25.plot, width = fig.width, height = fig.height)
+```
+
+## e)
+
+```{r}
+my.sim.X_Y <- function(D, s, y, cov.model, cov.pars, kappa, nugget, n = 100, seed = cov.pars[1]) {
+  mu <- my.cond.mean.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget)
+  Sigma <- my.cond.cov.X_Y(D, s, cov.model, cov.pars, kappa, nugget)
+  
+  df <- data.frame(D = rep(D,n), Value = NA, Realization = as.factor(rep(1:n, each = length(D))))
+  set.seed(seed)
+  for (i in 1:n) df[df$Realization == i,]$Value <- mvrnorm(1, mu, Sigma)
+  
+  return(df)
+}
+
+my.emp.X_Y <- function(D, s, y, cov.model, cov.pars, kappa, nugget, n = 100, level = 10) {
+  df <- my.sim.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget, n)
+  z <- qnorm(1 - level/200)
+  df <- df %>% group_by(D) %>% summarise(mean = mean(Value), lower = mean(Value) - z * sd(Value), upper = mean(Value) + z * sd(Value))
+  
+  return(df)
+}
+
+my.sim.X_Y.emp.X_Y.plot <- function(D, s, y, cov.model, cov.pars, kappa, nugget, n = 100, level = 10) {
+  sim <- my.sim.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget, n)
+  emp <- my.emp.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget, n, level)
+  observed <- data.frame(D = D[s], y = y)
+  
+  return(ggplot(sim, aes(x = D)) +
+           geom_line(aes(y = Value, color = Realization), show.legend = F) +
+           geom_ribbon(aes(ymin = lower, ymax = upper), emp, fill = "#1b98e0", alpha = .2) +
+           geom_line(aes(y = mean), emp, linewidth = 1.25) +
+           geom_line(aes(y = lower), emp, color = "blue", linetype = "dashed", linewidth = 1.25) +
+           geom_line(aes(y = upper), emp, color = "blue", linetype = "dashed", linewidth = 1.25) +
+           geom_point(aes(x = D, y = y), observed, color = "red", size = 2, show.legend = F) +
+           labs(x = "Location", y = "Realization", color = "Simulation") +
+           ylim(c(-8, 8)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+emp.pred.pred_int.nugget.0.plot <- my.sim.X_Y.emp.X_Y.plot(D, s, y, "matern", c(5, 20), 3, 0)
+emp.pred.pred_int.nugget.0.25.plot <- my.sim.X_Y.emp.X_Y.plot(D, s, y, "matern", c(5, 20), 3, .25)
+
+emp.pred.pred_int.nugget.0.plot
+emp.pred.pred_int.nugget.0.25.plot
+
+fig.width <- 7
+fig.height <- 3.5
+
+ggsave("Figs/Problem 1/e)/emp.pred.pred_int.nugget.0.plot.png", emp.pred.pred_int.nugget.0.plot, width = fig.width, height = fig.height)
+ggsave("Figs/Problem 1/e)/emp.pred.pred_int.nugget.0.25.plot.png", emp.pred.pred_int.nugget.0.25.plot, width = fig.width, height = fig.height)
+```
+
+## f)
+
+```{r}
+my.A.hat <- function(D, s, y, cov.model, cov.pars, kappa, nugget = 0, n = 100) {
+  A.hat <- numeric(n)
+  df <- my.sim.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget, n)
+  for (i in 1:n) {
+    A.hat[i] <- sum((df[df$Realization == i, "Value"] > 2) * (df[df$Realization == i, "Value"] - 2))
+  }
+  return(list("A.hat" = mean(A.hat), "A.hat.var" = var(A.hat)))
+}
+
+my.A.tilde <- function(D, s, y, cov.model, cov.pars, kappa, nugget = 0, n = 100) {
+  X.hat <- my.cond.mean.X_Y(D, s, y, cov.model, cov.pars, kappa, nugget)
+  A.tilde <- sum((X.hat > 2) * (X.hat - 2))
+  return(A.tilde)
+}
+
+my.A.hat(D, s, y, "matern", c(5, 20), 3, 0, 100)
+my.A.tilde(D, s, y, "matern", c(5, 20), 3, 0, 100)
+```
+
+# Problem 2
+
+## a)
+
+```{r}
+topo <- read.csv("topo.dat", sep = "")
+
+my.topo.plot <- ggplot(topo, aes(x, y)) +
+  geom_point(aes(color = z), size = 7) +
+  coord_fixed() +
+  scale_color_viridis_c(limits = c(650, 1000)) +
+  guides(color = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+  xlim(c(-5,321)) +
+  ylim(c(-5,321)) +
+  labs(color = "Elevation") +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm"))
+
+# ggsave("Figs/Problem 2/a)/topo.plot.png", my.topo.plot, width = 10, height = 10)
+```
+
+## c)
+
+```{r}
+D <- expand.grid(seq(1, 315), seq(1, 315))
+
+data <- list(coords = matrix(c(topo$x, topo$y), ncol = 2), data = topo$z, cov.model = "powered.exponential", nugget = 0, cov.pars = c(2500, 100), kappa = 1.5, lambda = 1)
+class(data) <- "geodata"
+
+OK <- krige.conv(data, locations = D, krige = krige.control(type.krige = "OK", trend.d = "cte", trend.l = "cte", cov.model = data$cov.model, cov.pars = data$cov.pars, kappa = data$kappa, lambda = data$lambda))
+
+kriging.pred.plot <- function(pred, D) {
+  df <- data.frame(x = D[,1], y = D[,2], z = pred$predict)
+  return(ggplot(df, aes(x, y)) +
+           geom_raster(aes(fill = z), interpolate = T) +
+           coord_fixed() +
+           scale_fill_viridis_c(limits = c(650, 1000)) +
+           guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+           xlim(c(-5,321)) +
+           ylim(c(-5,321)) +
+           labs(fill = "Kriging prediction") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+kriging.var.plot <- function(pred, D) {
+  df <- data.frame(x = D[,1], y = D[,2], z = pred$krige.var)
+  return(ggplot(df, aes(x, y)) +
+           geom_raster(aes(fill = z), interpolate = T) +
+           coord_fixed() +
+           scale_fill_viridis_c(limits = c(0, 1000)) +
+           guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+           xlim(c(-5,321)) +
+           ylim(c(-5,321)) +
+           labs(fill = "Prediction variance") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+OK.pred.plot <- kriging.pred.plot(OK, D)
+OK.var.plot <- kriging.var.plot(OK, D)
+
+OK.pred.plot
+OK.var.plot
+
+# ggsave("Figs/Problem 2/c)/OK.pred.plot.png", OK.pred.plot, width = 7, height = 7)
+# ggsave("Figs/Problem 2/c)/OK.var.plot.png", OK.var.plot, width = 7, height = 7)
+```
+
+## d)
+
+```{r}
+UK <- krige.conv(data, locations = D, krige = krige.control(type.krige = "OK", trend.d = "2nd", trend.l = "2nd", cov.model = data$cov.model, cov.pars = data$cov.pars, kappa = data$kappa, lambda = data$lambda))
+
+UK.pred.plot <- kriging.pred.plot(UK, D)
+UK.var.plot <- kriging.var.plot(UK, D)
+
+UK.pred.plot
+UK.var.plot
+
+# ggsave("Figs/Problem 2/d)/UK.pred.plot.png", UK.pred.plot, width = 7, height = 7)
+# ggsave("Figs/Problem 2/d)/UK.var.plot.png", UK.var.plot, width = 7, height = 7)
+```
+
+## e)
+
+```{r}
+s_0 <-  c(100, 100)
+
+position <- which(D$Var1 == s_0[1] & D$Var2 == s_0[2],)
+
+x_0 <- OK$predict[position]
+
+sd_0 <- sqrt(OK$krige.var[position])
+
+mu_0 <- 850
+
+z_0 <- (x_0 - mu_0) / sd_0
+
+p_0 <- pnorm(z_0, lower.tail = F)
+
+cat("Probability of elevation larger than 850:", p_0)
+
+h <- x_0 - qnorm(.9) * sd_0
+
+cat("\n\nElevation needed:", h)
+```
+
+# Problem 3
+
+## a)
+
+```{r}
+D <- as.matrix(expand.grid(1:30, 1:30))
+
+my.cov.X3 <- function(D, cov.model, cov.pars) {
+  h <- as.matrix(dist(D, diag = T, upper = T))
+  rownames(h) <- NULL
+  colnames(h) <- NULL
+  Sigma <- my.cov.spatial(h, cov.model, cov.pars, 0)
+
+  return(Sigma)
+}
+
+my.sim.X3 <- function(D, cov.model, cov.pars, n, seed = cov.pars[1]) {
+  df <- data.frame(s1 = rep(D[,1],n), s2 = rep(D[,2],n), Value = NA, Realization = as.factor(rep(1:n, each = nrow(D))))
+  mu <- rep(0, nrow(D))
+  Sigma <- my.cov.X3(D, cov.model, cov.pars)
+  
+  set.seed(seed)
+  for (i in 1:n) df[df$Realization == i,]$Value <- mvrnorm(1, mu, Sigma)
+  
+  return(df)
+}
+
+my.sim.X3.plot <- function(D, cov.model, cov.pars, n, m) {
+  df <- my.sim.X3(D, cov.model, cov.pars, n)
+  df <- df[df$Realization == m,]
+  return(ggplot(df, aes(s1, s2)) +
+           geom_raster(aes(fill = Value), interpolate = T) +
+           coord_fixed() +
+           scale_fill_viridis_c(limits = c(-5, 5)) +
+           guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+           xlim(c(0,31)) +
+           ylim(c(0,31)) +
+           labs(fill = "Value") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+realization.1.plot <- my.sim.X3.plot(D, "exponential", c(2, 3), 1, 1)
+
+ggsave("Figs/Problem 3/a)/realization.1.plot.png", realization.1.plot, width = 7, height = 7)
+```
+
+## b)
+
+```{r}
+emp.semi.var.and.true.semi.var.plot <- function(D, cov.model, cov.pars, n, m, k = NA) {
+  z <- my.sim.X3(D, cov.model, cov.pars, n)
+  z <- z[z$Realization == m,]$Value
+  
+  if (is.na(k) == F) {
+    set.seed(k)
+    random.loc <- sample(1:nrow(D), k)
+    D <- D[random.loc,]
+    z <- z[random.loc]
+  }
+  
+  rownames(D) <- NULL
+  colnames(D) <- NULL
+  data <- list(
+    coords = D,
+    data = z,
+    cov.model = cov.model,
+    nugget = 0,
+    cov.pars = cov.pars,
+    lambda = 1
+  )
+  class(data) <- "geodata"
+  
+  emp.semi.var <- variog(data)
+  
+  h <- seq(0, 40, 0.1)
+  semi.var <- my.cov.spatial(0, cov.model, cov.pars, 0) - my.cov.spatial(h, cov.model, cov.pars, 0)
+  
+  df.emp <- data.frame(h = emp.semi.var$u, semi.variance = emp.semi.var$v)
+  df <- data.frame(h = h, semi.variance = semi.var)
+  
+  return(ggplot(df) +
+           geom_line(aes(x = h, y = semi.variance), show.legend = F, linewidth = 1.5) +
+           geom_line(aes(x = h, y = semi.variance), df.emp, show.legend = F, color = "red", linewidth = 1.5) +
+           labs(x = "Distance", y = "Semi-variance") +
+           scale_y_continuous(labels = comma_format(.01), limits = c(-.5,4.5)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+emp.semi.var.vs.true.semi.var.realization.1.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1)
+
+emp.semi.var.vs.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/b)/emp.semi.var.vs.true.semi.var.realization.1.plot.png", emp.semi.var.vs.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+```
+
+## c)
+
+```{r}
+realization.2.plot <- my.sim.X3.plot(D, "exponential", c(2, 3), 3, 2)
+emp.semi.var.vs.true.semi.var.realization.2.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 3, 2)
+realization.3.plot <- my.sim.X3.plot(D, "exponential", c(2, 3), 3, 3)
+emp.semi.var.vs.true.semi.var.realization.3.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 3, 3)
+
+ggsave("Figs/Problem 3/c)/realization.2.plot.png", realization.2.plot, width = 7, height = 7)
+ggsave("Figs/Problem 3/c)/emp.semi.var.vs.true.semi.var.realization.2.plot.png", emp.semi.var.vs.true.semi.var.realization.2.plot, width = 7, height = 3.5)
+ggsave("Figs/Problem 3/c)/realization.3.plot.png", realization.3.plot, width = 7, height = 7)
+ggsave("Figs/Problem 3/c)/emp.semi.var.vs.true.semi.var.realization.3.plot.png", emp.semi.var.vs.true.semi.var.realization.3.plot, width = 7, height = 3.5)
+```
+
+## d)
+
+```{r}
+random.loc.36.emp.semi.var.and.true.semi.var.realization.1.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 36)
+
+random.loc.36.emp.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/d)/random.loc.36.emp.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.36.emp.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+
+MLE.semi.var.and.true.semi.var.plot <- function(D, cov.model, cov.pars, n, m, k = NA) {
+  z <- my.sim.X3(D, cov.model, cov.pars, n)
+  z <- z[z$Realization == m,]$Value
+  
+  set.seed(k)
+  random.loc <- sample(1:nrow(D), k)
+  D.random <- D[random.loc,]
+  z.random <- z[random.loc]
+  
+  rownames(D) <- NULL
+  colnames(D) <- NULL
+  full.data <- list(
+    coords = D,
+    data = z,
+    cov.model = cov.model,
+    nugget = 0,
+    cov.pars = cov.pars,
+    lambda = 1
+  )
+  class(data) <- "geodata"
+  
+  rownames(D.random) <- NULL
+  colnames(D.random) <- NULL
+  random.data <- list(
+    coords = D.random,
+    data = z.random,
+    cov.model = cov.model,
+    nugget = 0,
+    cov.pars = cov.pars,
+    lambda = 1
+  )
+  class(data) <- "geodata"
+  
+  full.est <- likfit(full.data, ini.cov.pars = c(1, 1), cov.model = cov.model)
+  
+  random.est <- likfit(random.data, ini.cov.pars = c(1, 1), cov.model = cov.model)
+  
+  h <- seq(0, 40, 0.1)
+  
+  semi.var <- my.cov.spatial(0, cov.model, cov.pars, 0) - my.cov.spatial(h, cov.model, cov.pars, 0)
+  
+  full.est.semi.var <- my.cov.spatial(0, cov.model, full.est$cov.pars, 0) - my.cov.spatial(h, cov.model, full.est$cov.pars, 0)
+  
+  random.est.semi.var <- my.cov.spatial(0, cov.model, random.est$cov.pars, 0) - my.cov.spatial(h, cov.model, random.est$cov.pars, 0)
+  
+  df <- data.frame(h = h, semi.variance = semi.var)
+  df.full <- data.frame(h = h, semi.variance = full.est.semi.var)
+  df.random <- data.frame(h = h, semi.variance = random.est.semi.var)
+  
+  return(ggplot(df) +
+           geom_line(aes(x = h, y = semi.variance), show.legend = F, linewidth = 1.5) +
+           geom_line(aes(x = h, y = semi.variance), df.full, show.legend = F, color = "blue", linewidth = 1.5) +
+           geom_line(aes(x = h, y = semi.variance), df.random, show.legend = F, color = "green", linewidth = 1.5) +
+           labs(x = "Distance", y = "Semi-variance") +
+           scale_y_continuous(labels = comma_format(.01), limits = c(-.5,4.5)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 legend.position = "none",
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+random.loc.36.MLE.semi.var.and.true.semi.var.realization.1.plot <- MLE.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 36)
+
+random.loc.36.MLE.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/d)/random.loc.36.MLE.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.36.MLE.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+```
+
+e)
+
+```{r}
+random.loc.9.emp.semi.var.and.true.semi.var.realization.1.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 9)
+
+random.loc.9.emp.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/e)/random.loc.9.emp.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.9.emp.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+
+random.loc.9.MLE.semi.var.and.true.semi.var.realization.1.plot <- MLE.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 9)
+
+random.loc.9.MLE.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/e)/random.loc.9.MLE.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.9.MLE.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+
+random.loc.100.emp.semi.var.and.true.semi.var.realization.1.plot <- emp.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 100)
+
+random.loc.100.emp.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/e)/random.loc.100.emp.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.100.emp.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+
+random.loc.100.MLE.semi.var.and.true.semi.var.realization.1.plot <- MLE.semi.var.and.true.semi.var.plot(D, "exponential", c(2, 3), 1, 1, 100)
+
+random.loc.100.MLE.semi.var.and.true.semi.var.realization.1.plot
+
+ggsave("Figs/Problem 3/e)/random.loc.100.MLE.semi.var.and.true.semi.var.realization.1.plot.png", random.loc.100.MLE.semi.var.and.true.semi.var.realization.1.plot, width = 7, height = 3.5)
+```
+
+

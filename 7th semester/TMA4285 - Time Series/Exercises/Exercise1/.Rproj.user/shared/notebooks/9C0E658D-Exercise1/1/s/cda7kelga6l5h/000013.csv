@@ -1,0 +1,5 @@
+"0","x_50_df <- data.frame(""t"" = 0:(length(x_50) - 1), ""x"" = x_50)"
+"0","ggplot(x_50_df, aes(t,x)) +"
+"0","  ggtitle(""50 timesteps of Model 1.1"") +"
+"0","  geom_line() +"
+"0","  ylim(-max(abs(x_50_df$x)), max(abs(x_50_df$x)))"

@@ -1,0 +1,5 @@
+"0","sensorA <- read.csv(""sensorA.txt"", F)"
+"0","sensorB <- read.csv(""sensorB.txt"", F)"
+"0","sensor <- cbind(sensorA, sensorB)"
+"0","colnames(sensor) <- c(""A"", ""B"")"
+"0","sensor <- as.matrix(sensor)"

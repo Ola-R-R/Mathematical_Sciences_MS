@@ -1,0 +1,500 @@
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(ggspatial)
+library(geoR)
+library(akima)
+library(fields)
+library(sp)
+library(raster)
+library(scales)
+library(haven)
+library(mnormt)
+library(plotly)
+library(rayshader)
+library(gridExtra)
+library(forecast)
+library(viridis)
+library(plot3D)
+library(demogR)
+library(spatial)
+
+# install.packages("INLA", repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/testing"), dep = TRUE)
+# inla.upgrade(testing = TRUE)
+library(INLA)
+```
+
+# 1
+
+## 1.1
+
+```{r}
+N <- 200
+
+
+beta <- 1
+
+theta <- c(1, 10, .05^2)
+
+set.seed(1)
+s <- data.frame(s1 = runif(N, 0, 1),  s2 = runif(N, 0, 1))
+s <- s[order(s$s2, s$s1),]
+rownames(s) <- NULL
+
+h <- as.matrix(dist(as.matrix(s)))
+
+X <- (s$s1 - .5) + (s$s2 - .5)
+
+C_fun <- function(h, theta) return(theta[1] * (1 + theta[2] * h) * exp(-theta[2] * h) + theta[3] * diag(nrow(h)))
+
+Y <- X * beta + t(chol(C_fun(h, theta))) %*% rnorm(N, 0, 1)
+
+df <- data.frame(s, Y)
+```
+
+```{r}
+sites_plot <- ggplot(s) +
+  geom_point(aes(x = s1, y = s2), size = 4) +
+  coord_fixed() +
+  labs(x = expression(s[1]), y = expression(s[2])) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        plot.margin = margin(.2, r = 2.2, .2, .2, unit = "cm"),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+sites_plot
+
+# ggsave("Figs/1/1.1/sites_plot.png", sites_plot, width = 6, height = 5)
+
+y_plot <- ggplot(df) +
+  geom_point(aes(x = s1, y = s2, color = Y), size = 4) +
+  coord_fixed() +
+  scale_color_viridis_c(limits = c(-3.1, 3.1)) +
+  guides(color = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+  labs(x = expression(s[1]), y = expression(s[2])) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+y_plot
+
+# ggsave("Figs/1/1.1/y_plot.png", y_plot, width = 6, height = 5)
+```
+
+## 1.2
+
+```{r}
+score_hessian_fun <- function(s, Y, beta, theta) {
+  h <- as.matrix(dist(as.matrix(s)))
+  X <- (s$s1 - .5) + (s$s2 - .5)
+  Z <- Y - beta * X
+  
+  C <- C_fun(h, theta)
+  Q <- solve(C)
+  
+  dC_dtheta1 <- (1 + theta[2] * h) * exp(-theta[2] * h)
+  dC_dtheta2 <- -theta[1] * theta[2] * h^2 * exp(-theta[2] * h)
+  dC_dtheta3 <- diag(nrow(h))
+  
+  dl_dtheta1 <- -1/2 * sum(diag(Q %*% dC_dtheta1)) + 1/2 * t(Z) %*% Q %*% dC_dtheta1 %*% Q %*% Z
+  dl_dtheta2 <- -1/2 * sum(diag(Q %*% dC_dtheta2)) + 1/2 * t(Z) %*% Q %*% dC_dtheta2 %*% Q %*% Z
+  dl_dtheta3 <- -1/2 * sum(diag(Q %*% dC_dtheta3)) + 1/2 * t(Z) %*% Q %*% dC_dtheta3 %*% Q %*% Z
+  
+  dl_dtheta <- c(dl_dtheta1, dl_dtheta2, dl_dtheta3)
+  
+  d2l_dtheta1_dtheta1 <- -1/2 * sum(diag(Q %*% dC_dtheta1 %*% Q %*% dC_dtheta1))
+  d2l_dtheta1_dtheta2 <- -1/2 * sum(diag(Q %*% dC_dtheta1 %*% Q %*% dC_dtheta2))
+  d2l_dtheta1_dtheta3 <- -1/2 * sum(diag(Q %*% dC_dtheta1 %*% Q %*% dC_dtheta3))
+  d2l_dtheta2_dtheta2 <- -1/2 * sum(diag(Q %*% dC_dtheta2 %*% Q %*% dC_dtheta2))
+  d2l_dtheta2_dtheta3 <- -1/2 * sum(diag(Q %*% dC_dtheta2 %*% Q %*% dC_dtheta3))
+  d2l_dtheta3_dtheta3 <- -1/2 * sum(diag(Q %*% dC_dtheta3 %*% Q %*% dC_dtheta3))
+  
+  d2l_dtheta <- matrix(c(d2l_dtheta1_dtheta1, d2l_dtheta1_dtheta2, d2l_dtheta1_dtheta3,
+                         d2l_dtheta1_dtheta2, d2l_dtheta2_dtheta2, d2l_dtheta2_dtheta3,
+                         d2l_dtheta1_dtheta3, d2l_dtheta2_dtheta3, d2l_dtheta3_dtheta3), nrow = 3, ncol = 3)
+  
+  return(list(score = dl_dtheta, hessian = d2l_dtheta))
+}
+
+log_lik_fun <- function(s, Y, beta, theta) {
+  h <- as.matrix(dist(as.matrix(s)))
+  X <- (s$s1 - .5) + (s$s2 - .5)
+  Z <- Y - beta * X
+  
+  C <- C_fun(h, theta)
+  Q <- solve(C)
+  
+  log_lik <- -1/2 * log(det(C)) - 1/2 * t(Z) %*% Q %*% Z
+  
+  return(log_lik)
+}
+
+max_log_lik <- function(s, Y, beta, theta) {
+  h <- as.matrix(dist(as.matrix(s)))
+  X <- (s$s1 - .5) + (s$s2 - .5)
+  
+  C <- C_fun(h, theta)
+  Q <- solve(C)
+  
+  log_lik <- log_lik_fun(s, Y, beta, theta)
+  
+  score_hessian <- score_hessian_fun(s, Y, beta, theta)
+  
+  p = 0
+  while (T) {
+    beta_hat <- as.numeric(solve(t(X) %*% Q %*% X) %*% t(X) %*% Q %*% Y)
+    theta_hat <- theta - solve(score_hessian$hessian) %*% score_hessian$score
+    log_lik <- c(log_lik, log_lik_fun(s, Y, beta_hat, theta_hat))
+    p <- p + 1
+    if (abs(log_lik[p + 1] - log_lik[p]) < 1e-5) break
+    beta <- beta_hat
+    theta <- theta_hat
+    score_hessian <- score_hessian_fun(s, Y, beta, theta)
+    C <- C_fun(h, theta)
+    Q <- solve(C)
+  }
+  
+  return(list(beta = beta_hat, theta = theta_hat, log_lik = log_lik, iterations = p))
+}
+
+max_log_log_params <- max_log_lik(s, Y, 1, c(1, 1, 1))
+
+log_lik <- max_log_log_params$log_lik
+iteration <- 0:max_log_log_params$iterations
+
+df_log_lik <- data.frame(iteration = iteration, log_lik = log_lik)
+
+log_lik_plot <- ggplot(df_log_lik) +
+  geom_line(aes(x = iteration, y = log_lik), linewidth = 4) +
+  labs(x = "Iteration", y = "Log-likelihood") +
+  scale_x_continuous(breaks = seq(0, 10, 1)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+log_lik_plot
+
+# ggsave("Figs/1/1.2/log_lik_plot.png", log_lik_plot, width = 12, height = 6)
+```
+
+## 1.3
+
+```{r}
+kriging_pred_and_var <- function(s, Y, beta, theta) {
+  s_0 <- expand.grid(s1 = (1:25 - .5) * 1/25, s2 = (1:25 - .5) * 1/25)
+  s_all <- rbind(s, s_0)
+  
+  h_all <- as.matrix(dist(as.matrix(s_all)))
+  C_all <- C_fun(h_all, theta)
+  
+  C <- C_all[1:nrow(s), 1:nrow(s)]
+  C_inv <- solve(C)
+  C_0_. <- C_all[(nrow(s) + 1):nrow(h_all), 1:nrow(s)]
+  C_0 <- C_all[(nrow(s) + 1):nrow(h_all), (nrow(s) + 1):nrow(h_all)]
+
+  X <- (s$s1 - .5) + (s$s2 - .5)
+  X_0 <- (s_0$s1 - .5) + (s_0$s2 - .5)
+
+  Y_0 <- beta * X_0 + C_0_. %*% C_inv %*% (Y - beta * X)
+  rownames(Y_0) <- colnames(Y_0) <- NULL
+  sd_Y_0 <- sqrt(as.matrix(diag(C_0 - C_0_. %*% C_inv %*% t(C_0_.))))
+  rownames(sd_Y_0) <- colnames(sd_Y_0) <- NULL
+  
+  df <- data.frame(s_0, Y_0, sd_Y_0)
+  colnames(df) <- c("s1", "s2", "Y", "sd")
+  
+  return(df)
+}
+
+max_log_log_params <- max_log_lik(s, Y, 10, c(1, 1, 1))
+beta_hat <- max_log_log_params$beta
+theta_hat <- max_log_log_params$theta
+
+pred_and_var <- kriging_pred_and_var(s, Y, beta_hat, theta_hat)
+```
+
+```{r}
+kriging_pred <- ggplot(pred_and_var) +
+  geom_tile(aes(x = s1, y = s2, fill = Y), linewidth = 4) +
+  coord_fixed() +
+  scale_fill_viridis_c("Kriging \nprediction", limits = c(-3.1, 3.1)) +
+  guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+  labs(x = expression(s[1]), y = expression(s[2])) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+kriging_sd <- ggplot(pred_and_var) +
+  geom_tile(aes(x = s1, y = s2, fill = sd), linewidth = 4) +
+  coord_fixed() +
+  scale_fill_viridis_c("Kriging \nstandard \ndeviation", limits = c(0, 1), option = "magma") +
+  guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 10)) +
+  labs(x = expression(s[1]), y = expression(s[2])) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+kriging_pred
+kriging_sd
+
+# ggsave("Figs/1/1.3/kriging_pred.png", kriging_pred, width = 6, height = 6)
+# ggsave("Figs/1/1.3/kriging_sd.png", kriging_sd, width = 6, height = 6)
+```
+
+# 2
+
+## 2.1
+
+### 1.
+
+```{r}
+# Total number of time points
+n <- 2000
+# Autocorrelation coefficient
+rho <- .9
+# Marginal variance and standard deviation
+marg_var <- 1
+marg_sd <- sqrt(marg_var)
+# Epsilon variance and standard deviation
+eps_var <- (1 - rho^2) * marg_var
+eps_sd <- sqrt(eps_var)
+# Intercept
+beta_0 <- 30
+
+set.seed(1234)
+# Simulating radiation
+rad <- c(arima.sim(list(order = c(1, 0, 0), ar = rho), n = n, sd = eps_sd))
+# Error variance and standard deviation
+err_var <- .1
+err_sd <- sqrt(err_var)
+# Simulating error terms
+error <- rnorm(n, sd = err_sd)
+# Setting temperature
+temp <- beta_0 + rad + error
+# Setting imperfect radiation observations
+rad_tilde <- rad * abs(rad)
+
+# Creating data frame
+df <- data.frame(y = temp, x_tilde = rad_tilde, x = rad, t = 1:n)
+```
+
+```{r}
+# Fitting a linear model using INLA with temperature as the response and the imperfect radiation observation as the covariate
+linear_model <- inla(y ~ 1 + x_tilde,
+                     data = df,
+                     control.compute = list(config = TRUE))
+
+summary(linear_model)
+```
+
+
+```{r}
+# Fitting an AR(1) model using INLA with temperature as the response and an AR(1) process as the covariate
+ar1_model <- inla(y ~ 1 + f(t, model = "ar1"),
+                  data = df,
+                  control.compute = list(config = TRUE),
+                  control.family = list(hyper = list(prec = list(initial = log(1/0.1), fixed = F))))
+
+summary(ar1_model)
+```
+
+```{r}
+# Fitting an AR(1) model using INLA with temperature as the response and an AR(1) process with marginal precision of 1/0.1 as the covariate
+ar1_fixed_model <- inla(y ~ 1 + f(t, model = "ar1"),
+                  data = df,
+                  control.compute = list(config = TRUE),
+                  control.family = list(hyper = list(prec = list(initial = log(1/0.1), fixed = T)))
+                  )
+
+summary(ar1_fixed_model)
+```
+
+```{r}
+df_linear_model <- data.frame(temp = linear_model$summary.fitted.values$"0.5quant", rad_tilde = linear_model$.args$data$x_tilde, t = 1:n)
+df_ar1_model <- data.frame(temp = ar1_model$summary.fitted.values$"0.5quant", rad_tilde = ar1_model$.args$data$x_tilde, t = 1:n)
+```
+
+```{r}
+Figure_1_reproduced <- ggplot(df) +
+  geom_point(aes(x = x_tilde, y = y), size = 2) +
+  geom_line(aes(x = sort(rad_tilde), y = sort(temp)), data = df_linear_model, linewidth = .5, color = "blue") +
+  geom_line(aes(x = sort(rad_tilde), y = sort(temp)), data = df_ar1_model, linewidth = .5, color = "red") +
+  labs(x = expression(tilde(X)[t]), y = expression(Y[t])) +
+  lims(x = c(-9, 9), y = c(25, 35)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+Figure_2.1_reproduced <- ggplot(df) +
+  geom_point(aes(x = t, y = y), size = 2) +
+  geom_line(aes(x = t, y = temp), data = df_linear_model, linewidth = .5, color = "blue") +
+  labs(x = "Time", y = expression(Y[t])) +
+  lims(x = c(0, 2000), y = c(25, 35)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+Figure_2.2_reproduced <- ggplot(df) +
+  geom_point(aes(x = t, y = y), size = 2) +
+  geom_line(aes(x = t, y = temp), data = df_ar1_model, linewidth = .5, color = "red") +
+  labs(x = "Time", y = expression(Y[t])) +
+  lims(x = c(0, 2000), y = c(25, 35)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+Figure_1_reproduced
+Figure_2.1_reproduced
+Figure_2.2_reproduced
+
+# ggsave("Figs/2/2.2/1./Figure_1_reproduced.png", Figure_1_reproduced, width = 6, height = 4)
+# ggsave("Figs/2/2.2/1./Figure_2.1_reproduced.png", Figure_2.1_reproduced, width = 6, height = 4)
+# ggsave("Figs/2/2.2/1./Figure_2.2_reproduced.png", Figure_2.2_reproduced, width = 6, height = 4)
+```
+
+### 2.
+
+```{r}
+loss_fun <- function(model, y) {
+  return(data.frame(LS = -mean(log(model$cv)),
+              MSPE = mean((model$mean - y)^2)))
+}
+
+set.seed(1234)
+linear_model_loocv <- inla.group.cv(result = linear_model, num.level.sets = -1)
+linear_model_loocv_loss_values <- loss_fun(linear_model_loocv, temp)
+
+linear_model_lgocv_prior <- inla.group.cv(result = linear_model, num.level.sets = 3, strategy = "prior")
+linear_model_lgocv_prior_loss_values <- loss_fun(linear_model_lgocv_prior, temp)
+
+linear_model_lgocv_posterior <- inla.group.cv(result = linear_model, num.level.sets = 3, strategy = "posterior")
+linear_model_lgocv_posterior_loss_values <- loss_fun(linear_model_lgocv_posterior, temp)
+
+ar1_model_loocv <- inla.group.cv(result = ar1_model, num.level.sets = -1)
+ar1_model_loocv_loss_values <- loss_fun(ar1_model_loocv, temp)
+
+ar1_model_lgocv_prior <- inla.group.cv(result = ar1_model, num.level.sets = 3, strategy = "prior")
+ar1_model_lgocv_prior_loss_values <- loss_fun(ar1_model_lgocv_prior, temp)
+
+ar1_model_lgocv_posterior <- inla.group.cv(result = ar1_model, num.level.sets = 3, strategy = "posterior")
+ar1_model_lgocv_posterior_loss_values <- loss_fun(ar1_model_lgocv_posterior, temp)
+```
+
+```{r}
+loocv_loss_values <- round(rbind(linear_model_loocv_loss_values, ar1_model_loocv_loss_values), 3)
+rownames(loocv_loss_values) <- c("Linear LOOCV", "AR1 LOOCV")
+loocv_loss_values
+
+lgocv_prior_loss_values <- round(rbind(linear_model_lgocv_prior_loss_values, ar1_model_lgocv_prior_loss_values), 3)
+rownames(lgocv_prior_loss_values) <- c("Linear LGOCV Prior", "AR1 LGOCV Prior")
+lgocv_prior_loss_values
+
+lgocv_posterior_loss_values <- round(rbind(linear_model_lgocv_posterior_loss_values, ar1_model_lgocv_posterior_loss_values), 3)
+rownames(lgocv_posterior_loss_values) <- c("Linear LGOCV Posterior", "AR1 LGOCV Posterior")
+lgocv_posterior_loss_values
+```
+
+### 3.
+
+```{r}
+n_shift <- 500
+n_predict <- 100
+
+linear_model_loss_values <- data.frame(MAPE = numeric(n_shift),
+                                       RMSPE = numeric(n_shift))
+
+ar1_model_loss_values <- data.frame(MAPE = numeric(n_shift),
+                                    RMSPE = numeric(n_shift))
+
+ar1_fixed_model_loss_values <- data.frame(MAPE = numeric(n_shift),
+                                          RMSPE = numeric(n_shift))
+
+set.seed(1234)
+for (i in 1:n_shift) {
+  
+  if (i %% 50 == 0) print(i)
+  
+  df_train <- df[1:(n - i),]
+  predict_id <- (n - n_predict):(n - i)
+  y_test <- df[predict_id, "y"]
+  df_train[predict_id, "y"] <- NA
+  
+  linear_model_train <- inla(y ~ 1 + x_tilde,
+                             data = df_train,
+                             control.compute = list(config = TRUE))
+  linear_y_hat <- linear_model_train$summary.fitted.values[predict_id, "0.5quant"]
+  
+  linear_model_loss_values$MAPE[i] <- mean(abs(linear_y_hat - y_test))
+  linear_model_loss_values$RMSPE[i] <- sqrt(mean((linear_y_hat - y_test)^2))
+  
+  ar1_model_train <- inla(y ~ 1 + f(t, model = "ar1"),
+                          data = df_train,
+                          control.compute = list(config = TRUE),
+                                control.family = list(hyper = list(prec = list(initial = log(1/0.1), fixed = F))))
+  ar1_y_hat <- ar1_model_train$summary.fitted.values[predict_id, "0.5quant"]
+  
+  ar1_model_loss_values$MAPE[i] <- mean(abs(ar1_y_hat - y_test))
+  ar1_model_loss_values$RMSPE[i] <- sqrt(mean((ar1_y_hat - y_test)^2))
+  
+  ar1_fixed_model_train <- inla(y ~ 1 + f(t, model = "ar1"),
+                                data = df_train,
+                                control.compute = list(config = TRUE),
+                                control.family = list(hyper = list(prec = list(initial = log(1/0.1), fixed = TRUE))))
+  ar1_fixed_y_hat <- ar1_fixed_model_train$summary.fitted.values[predict_id, "0.5quant"]
+  
+  ar1_fixed_model_loss_values$MAPE[i] <- mean(abs(ar1_fixed_y_hat - y_test))
+  ar1_fixed_model_loss_values$RMSPE[i] <- sqrt(mean((ar1_fixed_y_hat - y_test)^2))
+}
+```
+
+```{r}
+loss_values <- round(data.frame(rbind(colMeans(linear_model_loss_values), colMeans(ar1_model_loss_values), colMeans(ar1_fixed_model_loss_values))), 3)
+rownames(loss_values) <- c("Linear", "AR1", "AR1 fixed")
+loss_values
+```

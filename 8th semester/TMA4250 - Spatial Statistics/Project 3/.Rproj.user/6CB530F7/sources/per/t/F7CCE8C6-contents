@@ -1,0 +1,255 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(ggspatial)
+library(geoR)
+library(akima)
+library(fields)
+library(sp)
+library(raster)
+library(scales)
+library(haven)
+library(mnormt)
+library(plotly)
+library(rayshader)
+library(gridExtra)
+library(forecast)
+library(viridis)
+library(plot3D)
+library(demogR)
+library(spatial)
+library(sf)
+library(spdep)
+library(Matrix)
+```
+
+# Problem 1
+
+```{r}
+# load("Admin1Geography.RData")
+# load("Admin2Geography.RData")
+
+# saveRDS(nigeriaAdm1, "Admin1Geography.rds")
+# saveRDS(nigeriaAdm2, "Admin2Geography.rds")
+
+nigeriaAdm1 <- readRDS("Admin1Geography.rds")
+nigeriaAdm2 <- readRDS("Admin2Geography.rds")
+
+Admin1Graph <- read.csv("Admin1Graph.txt", sep = "")
+Admin2Graph <- read.csv("Admin2Graph.txt", sep = "")
+```
+
+## a)
+
+
+```{r}
+structure_matrix <- function(graph) return(diag(rowSums(graph), nrow = nrow(graph), ncol = ncol(graph)) - graph)
+
+precision_matrix <- function(graph, tau) return(tau * structure_matrix(graph))
+
+sparse_df <- function(matrix) {
+  
+  matrix[matrix != 0] <- "non-zero"
+  matrix[matrix == 0] <- "zero"
+  
+  df <- data.frame(x = as.factor(rep(1:nrow(matrix), each = ncol(matrix))), "x names" = rep(rownames(matrix), each = ncol(matrix)), y = as.factor(rep(1:ncol(matrix), nrow(matrix))), "y names" = rep(rownames(matrix), each = ncol(matrix)), value = as.factor(as.vector(as.matrix(matrix))))
+  
+  return(df)
+}
+
+names <- rownames(Admin1Graph)
+
+sparsity_plot <- function(matrix, names) {
+  df <- sparse_df(matrix)
+  df_names <- unique(df$x.names)
+  
+  namess <- numeric(length(df_names))
+  for (i in as.numeric(unique(df$x))) {
+    namess[i] <- gsub("\\:.*", "", (df_names[i]))
+  }
+  
+  names_df <- data.frame(name = as.factor(names), min_position = as.vector(sapply(names, function(i) min(which(str_detect(namess, i))))), max_position = as.vector(sapply(names, function(i) max(which(str_detect(namess, i))))))
+  
+  names_df <- names_df %>% mutate(position = as.integer((min_position + max_position) / 2), left_line = min_position - .5, right_line = max_position + .5)
+  
+  return(ggplot(df) +
+           geom_raster(aes(x = x, y = y, fill = value)) +
+           geom_vline(xintercept = unique(c(names_df$left_line, names_df$right_line)), size = .5, color = "gray") +
+           geom_hline(yintercept = unique(c(names_df$left_line, names_df$right_line)), size = .5, color = "gray") +
+           coord_fixed() +
+           scale_fill_manual(values = c("non-zero" = "#7E0020", "zero" = "#FFFFC9")) +
+           scale_x_discrete(breaks = names_df$position, labels = names_df$name) +
+           scale_y_discrete(breaks = names_df$position, labels = names_df$name) +
+           theme(
+             axis.text = element_text(size = 8, margin = unit(0.5, "cm")),
+             axis.title = element_blank(),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+             panel.background = element_blank(),
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(),
+           ))
+}
+
+Q_1_sparsity_plot <- sparsity_plot(precision_matrix(Admin1Graph, 1), names)
+Q_2_sparsity_plot <- sparsity_plot(precision_matrix(Admin2Graph, 1), names)
+
+Q_1_sparsity_plot
+Q_2_sparsity_plot
+
+# ggsave("Figs/Problem 1/a)/Q_1_sparsity_plot.png", Q_1_sparsity_plot, width = 25, height = 25, unit = "cm")
+# ggsave("Figs/Problem 1/a)/Q_2_sparsity_plot.png", Q_2_sparsity_plot, width = 25, height = 25, unit = "cm")
+```
+
+## b)
+
+```{r}
+sim_IGMRF_fun <- function(Q, epsilon, seed = 1) {
+  set.seed(seed)
+  Q_tilde <- Q + epsilon * diag(1, nrow(Q), ncol(Q))
+  L_tilde <- t(chol(Q_tilde))
+  z <- rnorm(nrow(Q))
+  v <- solve(t(L_tilde), z)
+  x <- v - mean(v)
+  return(as.vector(x))
+}
+
+sim_GMRF_fun <- function(mu, Q, seed = 1) {
+  set.seed(seed)
+  L <- t(chol(Q))
+  z <- rnorm(nrow(Q))
+  v <- solve(t(L), z)
+  x <- mu + v
+  return(x)
+}
+
+sim_fun_plot <- function(map, x, limits = NULL, lab = "Value") {
+  
+  if (is.null(limits)) limits <- range(x)
+  
+  map$x <- x
+  return(ggplot() +
+           geom_sf(aes(fill = x),
+                   data = map,
+                   color = "gray") +
+           scale_fill_viridis_c(direction = -1, limits = limits) +
+           guides(fill = guide_colorbar(lab, label = T, ticks = F, barwidth = 1, barheight = 20)) +
+           theme(
+             axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+             axis.title = element_blank(),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             # legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+             # panel.background = element_blank(),
+             # panel.grid.major = element_blank(),
+             # panel.grid.minor = element_blank(),
+           ))
+}
+
+admin1_tau_1_sim_seed_1 <- sim_IGMRF_fun(precision_matrix(Admin1Graph, 1), 1e-6)
+mv_gaussian_dim_37_mean_0_cov_1 <- sim_GMRF_fun(0, solve(diag(1, 37, 37)))
+
+admin1_tau_1_sim_seed_1_plot <- sim_fun_plot(nigeriaAdm1, admin1_tau_1_sim_seed_1, range(admin1_tau_1_sim_seed_1, mv_gaussian_dim_37_mean_0_cov_1))
+
+mv_gaussian_dim_37_mean_0_cov_1_plot <- sim_fun_plot(nigeriaAdm1, mv_gaussian_dim_37_mean_0_cov_1, range(admin1_tau_1_sim_seed_1, mv_gaussian_dim_37_mean_0_cov_1))
+
+admin1_tau_1_sim_seed_1_plot
+mv_gaussian_dim_37_mean_0_cov_1_plot
+
+# ggsave("Figs/Problem 1/b)/admin1_tau_1_sim_seed_1_plot.png", admin1_tau_1_sim_seed_1_plot, width = 25, height = 20, unit = "cm")
+# ggsave("Figs/Problem 1/b)/mv_gaussian_dim_37_mean_0_cov_1_plot.png", mv_gaussian_dim_37_mean_0_cov_1_plot, width = 25, height = 20, unit = "cm")
+```
+
+## c)
+
+```{r}
+admin2_tau_1_sim_seed_1 <- sim_IGMRF_fun(precision_matrix(Admin2Graph, 1), 1e-6)
+mv_gaussian_dim_775_mean_0_cov_1 <- sim_GMRF_fun(0, solve(diag(1, 775, 775)))
+
+admin2_tau_1_sim_seed_1_plot <- sim_fun_plot(nigeriaAdm2, admin2_tau_1_sim_seed_1, range(admin2_tau_1_sim_seed_1, mv_gaussian_dim_775_mean_0_cov_1))
+
+mv_gaussian_dim_775_mean_0_cov_1_plot <- sim_fun_plot(nigeriaAdm2, mv_gaussian_dim_775_mean_0_cov_1, range(admin2_tau_1_sim_seed_1, mv_gaussian_dim_775_mean_0_cov_1))
+
+admin2_tau_1_sim_seed_1_plot
+mv_gaussian_dim_775_mean_0_cov_1_plot
+
+# ggsave("Figs/Problem 1/c)/admin2_tau_1_sim_seed_1_plot.png", admin2_tau_1_sim_seed_1_plot, width = 25, height = 20, unit = "cm")
+# ggsave("Figs/Problem 1/c)/mv_gaussian_dim_775_mean_0_cov_1_plot.png", mv_gaussian_dim_775_mean_0_cov_1_plot, width = 25, height = 20, unit = "cm")
+```
+
+## d)
+
+```{r}
+sim_n_IGMRF_fun <- function(Q, epsilon = 1e-6, n = 100) {
+  # df <- data.frame(realization = as.factor(rep(1:n, each = nrow(Q))), names = as.factor(rep(rownames(Q), n)), x = numeric(n * nrow(Q)))
+  df <- data.frame(matrix(nrow = n, ncol = nrow(Q)))
+  names <- rownames(Q)
+  colnames(df) <- colnames(Q)
+  for (i in 1:n) df[i,] <- sim_IGMRF_fun(Q, epsilon, i)
+  
+  return(list(df, names))
+}
+
+cov_IGMRF <- function(list) {
+  df <- list[[1]]
+  names <- list[[2]]
+  covariance <- cov(df)
+  colnames(covariance) <- names
+  rownames(covariance) <- names
+  return(covariance)
+}
+
+cor_IGMRF <- function(list) {
+  df <- list[[1]]
+  names <- list[[2]]
+  correlation <- cor(df)
+  colnames(correlation) <- names
+  rownames(correlation) <- names
+  return(correlation)
+}
+
+admin2_tau_1_100_sim <- sim_n_IGMRF_fun(precision_matrix(Admin2Graph, 1))
+admin2_tau_1_100_sim_cov <- cov_IGMRF(admin2_tau_1_100_sim)
+admin2_tau_1_100_sim_cor <- cor_IGMRF(admin2_tau_1_100_sim)
+admin2_tau_1_100_sim_var_plot <- sim_fun_plot(nigeriaAdm2, diag(admin2_tau_1_100_sim_cov), lab = "Var")
+admin2_tau_1_100_sim_cor_plot <- sim_fun_plot(nigeriaAdm2, admin2_tau_1_100_sim_cor[150,], lab = "Cor")
+
+admin2_tau_1_100_sim_var_plot
+admin2_tau_1_100_sim_cor_plot
+
+# ggsave("Figs/Problem 1/d)/admin2_tau_1_100_sim_var_plot.png", admin2_tau_1_100_sim_var_plot, width = 25, height = 20, unit = "cm")
+# ggsave("Figs/Problem 1/d)/admin2_tau_1_100_sim_cor_plot.png", admin2_tau_1_100_sim_cor_plot, width = 25, height = 20, unit = "cm")
+```
+
+# Problem 2
+
+```{r}
+DirectEstimates <- read.csv("DirectEstimates.txt", sep = "")
+```
+
+## a)
+
+```{r}
+p_hat <- plogis(DirectEstimates$Observation)
+
+p_hat_plot <- sim_fun_plot(nigeriaAdm1, p_hat, c(0, 1), lab = "Prob.")
+
+p_hat_plot
+
+ggsave("Figs/Problem 2/a)/p_hat_plot.png", p_hat_plot, width = 25, height = 20, unit = "cm")
+```
+

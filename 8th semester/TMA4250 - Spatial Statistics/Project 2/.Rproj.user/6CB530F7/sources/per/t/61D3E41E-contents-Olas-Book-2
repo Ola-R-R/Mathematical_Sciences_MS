@@ -1,0 +1,423 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(ggspatial)
+library(geoR)
+library(akima)
+library(fields)
+library(sp)
+library(raster)
+library(scales)
+library(haven)
+library(mnormt)
+library(plotly)
+library(rayshader)
+library(gridExtra)
+library(forecast)
+library(viridis)
+library(plot3D)
+library(demogR)
+library(spatial)
+```
+
+# Problem 1
+
+## a)
+
+```{r}
+bio_cell_data <- ppinit("pp_cells.dat")
+redwood_data <- ppinit("pp_redwood.dat")
+pine_data <- ppinit("pp_pines.dat")
+```
+
+```{r}
+data_plot <- function(data) {
+  df <- data.frame(x = data$x, y = data$y)
+  return(ggplot(df) +
+           geom_point(aes(x, y), size = 4) +
+           coord_fixed() +
+           lims(x = c(0, 1), y = c(0, 1)) +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+bio_cell_plot <- data_plot(bio_cell_data)
+redwood_plot <- data_plot(redwood_data)
+pine_plot <- data_plot(pine_data)
+
+bio_cell_plot
+redwood_plot
+pine_plot
+
+# ggsave("Figs/Problem 1/a)/bio_cell_plot.png", bio_cell_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/a)/redwood_plot.png", redwood_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/a)/pine_plot.png", pine_plot, width = 6, height = 6)
+```
+
+## b)
+
+```{r}
+data_L_plot <- function(data) {
+  L.function <- Kfn(data, 1)
+  df <- data.frame(x = L.function$x, y = L.function$y)
+  return(ggplot(df) +
+           geom_line(aes(x, y), linewidth = 2) +
+           geom_abline(intercept = 0, slope = 1, color = "red", lty = 2, linewidth = 2) +
+           coord_fixed() +
+           lims(x = c(0, .75), y = c(0, .75)) +
+           labs(x = "r", y = "L(r)") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+bio_cell_L_plot <- data_L_plot(bio_cell_data)
+redwood_L_plot <- data_L_plot(redwood_data)
+pine_L_plot <- data_L_plot(pine_data)
+
+bio_cell_L_plot
+redwood_L_plot
+pine_L_plot
+
+# ggsave("Figs/Problem 1/b)/bio_cell_L_plot.png", bio_cell_L_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/b)/redwood_L_plot.png", redwood_L_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/b)/pine_L_plot.png", pine_L_plot, width = 6, height = 6)
+```
+
+## c)
+
+```{r}
+sim_L_pred_int_plot <- function(data, n, level = 10) {
+  L.fun <- Kfn(data, 1)
+  
+  nn <- length(data$x)
+  l <- length(L.fun$x)
+  area <- data$area
+  
+  df <- data.frame(realization = as.factor(rep(1:n, each = l)), L.x = numeric(n * l), L.y = numeric(n * l))
+  
+  set.seed(nn)
+  for (i in 1:n) {
+    gen_x <- runif(nn, area[1], area[2])
+    gen_y <- runif(nn, area[3], area[4])
+    gen_data <- list(x = gen_x, y = gen_y, area = area)
+    gen_L.fun <- Kfn(gen_data, 1)
+    df[df$realization == i, "L.x"] <- gen_L.fun$x
+    df[df$realization == i, "L.y"] <- gen_L.fun$y
+  }
+  
+  df <- df %>% 
+    group_by(L.x) %>%
+    summarize(L.y_lower = quantile(L.y, 1 - (1 - level/200)), L.y_upper = quantile(L.y, 1 - level/200))
+  
+  df$L.y <- L.fun$y
+  
+  return(ggplot(df) +
+           geom_line(aes(L.x, L.y), linewidth = 2) +
+           geom_ribbon(aes(x = L.x, ymin = L.y_lower, ymax = L.y_upper), fill = "blue", alpha = 0.3) +
+           coord_fixed() +
+           lims(x = c(0, .75), y = c(0, .75)) +
+           labs(x = "r", y = "L(r)") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+bio_cell_L_90_pred_int_plot <- sim_L_pred_int_plot(bio_cell_data, 100)
+redwood_L_90_pred_int_plot <- sim_L_pred_int_plot(redwood_data, 100)
+pine_L_90_pred_int_plot <- sim_L_pred_int_plot(pine_data, 100)
+
+bio_cell_L_90_pred_int_plot
+redwood_L_90_pred_int_plot
+pine_L_90_pred_int_plot
+
+# ggsave("Figs/Problem 1/c)/bio_cell_L_90_pred_int_plot.png", bio_cell_L_90_pred_int_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/c)/redwood_L_90_pred_int_plot.png", redwood_L_90_pred_int_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 1/c)/pine_L_90_pred_int_plot.png", pine_L_90_pred_int_plot, width = 6, height = 6)
+```
+
+# Problem 2
+
+## a)
+
+```{r}
+det_probs <- read.csv("obsprob.txt", sep = "")
+pine_counts <- read.csv("obspines.txt", sep = "")
+
+det_probs_plot <- ggplot(det_probs, aes(x, y)) +
+  geom_tile(aes(fill = alpha)) +
+  coord_fixed() +
+  scale_fill_viridis_c("Detection \nprobabilites") +
+  labs(x = "x", y = "y") +
+  guides(fill = guide_colourbar(label = T, ticks = F, barwidth = 1, barheight = 4.5)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        legend.margin = margin(r = 0, unit = 'cm'),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+pine_counts_plot <- ggplot(pine_counts, aes(x, y)) +
+  geom_tile(aes(fill = factor(N_obs))) +
+  coord_fixed() +
+  scale_fill_viridis_d("Pine tree \ncount") +
+  labs(x = "x", y = "y") +
+  guides(fill = guide_legend(reverse = T)) +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+det_probs_plot
+pine_counts_plot
+
+# ggsave("Figs/Problem 2/a)/det_probs_plot.png", det_probs_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 2/a)/pine_counts_plot.png", pine_counts_plot, width = 6, height = 6)
+```
+
+## c)
+
+```{r}
+lambda_hat <- sum(pine_counts$N_obs)/(100 * sum(det_probs$alpha))
+
+cat("The estimated intensity of pine trees is", lambda_hat)
+```
+
+```{r}
+sim_N <- function(counts, probs, seed) {
+  area_per_location <- 100
+  lambda_hat <- sum(counts$N_obs)/(area_per_location * sum(probs$alpha))
+  df <- data.frame(x = counts$x, y = counts$y, sim_N = numeric(length(counts$N_obs)))
+  set.seed(seed)
+  df$sim_N <- rpois(length(df$sim_N), area_per_location * lambda_hat)
+
+  return(df)
+}
+
+sim_N_pp <- function(counts, probs, seed) {
+  df <- sim_N(counts, probs, seed)
+  
+  df_count_per_locations <- data.frame(x = rep(df$x, df$sim_N), y = rep(df$y, df$sim_N))
+  df_sim_pp <- data.frame(x = numeric(sum(df$sim_N)), y = numeric(sum(df$sim_N)))
+  for (i in 1:nrow(df_count_per_locations)) {
+    Lower_1 <- df_count_per_locations$x[i] - 5
+    Lower_2 <- df_count_per_locations$y[i] - 5
+    Upper_1 <- df_count_per_locations$x[i] + 5
+    Upper_2 <- df_count_per_locations$y[i] + 5
+    df_sim_pp$x[i] <- runif(1, Lower_1, Upper_1)
+    df_sim_pp$y[i] <- runif(1, Lower_2, Upper_2)
+  }
+  
+  return(df_sim_pp)
+}
+
+sim_N_pp_plot <- function(counts, probabilities, seed) {
+  df <- sim_N_pp(counts, probabilities, seed)
+  return(ggplot(df, aes(x, y)) +
+           geom_point() +
+           coord_fixed() +
+           lims(x = c(0, 300), y = c(0, 300)) +
+           labs(x = "x", y = "y") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+sim_N_pp_seed.1_plot <- sim_N_pp_plot(pine_counts, det_probs, 1)
+sim_N_pp_seed.2_plot <- sim_N_pp_plot(pine_counts, det_probs, 2)
+sim_N_pp_seed.3_plot <- sim_N_pp_plot(pine_counts, det_probs, 3)
+
+sim_N_pp_seed.1_plot
+sim_N_pp_seed.2_plot
+sim_N_pp_seed.3_plot
+
+# ggsave("Figs/Problem 2/c)/sim_N_pp_seed.1_plot.png", sim_N_pp_seed.1_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 2/c)/sim_N_pp_seed.2_plot.png", sim_N_pp_seed.2_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 2/c)/sim_N_pp_seed.3_plot.png", sim_N_pp_seed.3_plot, width = 6, height = 6)
+```
+
+## d)
+
+```{r}
+sim_N_cond_M <- function(counts, probabilities, seed) {
+  area_per_location <- 100
+  lambda_hat <- sum(counts$N_obs)/(area_per_location * sum(probabilities$alpha))
+  df <- data.frame(x = counts$x, y = counts$y, sim_N = numeric(length(counts$N_obs)))
+  set.seed(seed)
+  df$sim_N <- rpois(length(df$sim_N), (1 - probabilities$alpha) * area_per_location * lambda_hat)
+
+  return(df)
+}
+
+sim_N_cond_M_pp <- function(counts, probabilities, seed) {
+  df <- sim_N_cond_M(counts, probabilities, seed)
+  
+  df_counts_per_location <- data.frame(x = rep(df$x, df$sim_N), y = rep(df$y, df$sim_N))
+  df_sim_pp <- data.frame(x = numeric(sum(df$sim_N)), y = numeric(sum(df$sim_N)))
+  for (i in 1:nrow(df_counts_per_location)) {
+    Lower_1 <- df_counts_per_location$x[i] - 5
+    Lower_2 <- df_counts_per_location$y[i] - 5
+    Upper_1 <- df_counts_per_location$x[i] + 5
+    Upper_2 <- df_counts_per_location$y[i] + 5
+    df_sim_pp$x[i] <- runif(1, Lower_1, Upper_1)
+    df_sim_pp$y[i] <- runif(1, Lower_2, Upper_2)
+  }
+  
+  return(df_sim_pp)
+}
+
+sim_N_cond_M_pp_plot <- function(counts, probabilities, seed) {
+  df <- sim_N_cond_M_pp(counts, probabilities, seed)
+  return(ggplot(df, aes(x, y)) +
+           geom_point() +
+           coord_fixed() +
+           lims(x = c(0, 300), y = c(0, 300)) +
+           labs(x = "x", y = "y") +
+           theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+                 axis.title = element_text(size = 18),
+                 plot.title = element_text(size = 20),
+                 legend.title = element_text(size = 15),
+                 legend.text = element_text(size = 14),
+                 axis.line = element_line(colour = "black"),
+                 axis.ticks = element_line(linewidth = 1),
+                 axis.ticks.length = unit(0.3, "cm")))
+}
+
+sim_N_cond_M_pp_seed.1_plot <- sim_N_cond_M_pp_plot(pine_counts, det_probs, 1)
+sim_N_cond_M_pp_seed.2_plot <- sim_N_cond_M_pp_plot(pine_counts, det_probs, 2)
+sim_N_cond_M_pp_seed.3_plot <- sim_N_cond_M_pp_plot(pine_counts, det_probs, 3)
+
+sim_N_cond_M_pp_seed.1_plot
+sim_N_cond_M_pp_seed.2_plot
+sim_N_cond_M_pp_seed.3_plot
+
+# ggsave("Figs/Problem 2/d)/sim_N_cond_M_pp_seed.1_plot.png", sim_N_cond_M_pp_seed.1_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 2/d)/sim_N_cond_M_pp_seed.2_plot.png", sim_N_cond_M_pp_seed.2_plot, width = 6, height = 6)
+# ggsave("Figs/Problem 2/d)/sim_N_cond_M_pp_seed.3_plot.png", sim_N_cond_M_pp_seed.3_plot, width = 6, height = 6)
+```
+
+## e)
+
+```{r}
+sim_n_N <- function(counts, probabilities, n) {
+  df <- data.frame(realization = rep(1:n, each = length(counts$N_obs)), x = rep(counts$x, n), y = rep(counts$y, n), sim_N = numeric(length(counts$N_obs)))
+  seed <- seq(1, by = n, length.out = n)
+  for (i in 1:n) df[df$realization == i, "sim_N"] <- sim_N(counts, probabilities, seed[i])$sim_N
+  
+  df_red <- df %>%
+    group_by(x, y) %>%
+    summarize(avg_sim_N = mean(sim_N), sd_sim_N = sd(sim_N), .groups = "drop")
+  
+  return(df_red)
+}
+
+sim_n_N_cond_M <- function(counts, probabilities, n) {
+  df <- data.frame(realization = rep(1:n, each = length(counts$N_obs)), x = rep(counts$x, n), y = rep(counts$y, n), sim_N = numeric(length(counts$N_obs)))
+  seed <- seq(1, by = n, length.out = n)
+  for (i in 1:n) df[df$realization == i, "sim_N"] <- sim_N_cond_M(counts, probabilities, seed[i])$sim_N
+  
+  df_red <- df %>%
+    group_by(x, y) %>%
+    summarize(avg_sim_N = mean(sim_N), sd_sim_N = sd(sim_N), .groups = "drop")
+  
+  return(df_red)
+}
+
+sim_500_N <- sim_n_N(pine_counts, det_probs, 500)
+
+sim_500_N_cond_M <- sim_n_N_cond_M(pine_counts, det_probs, 500)
+
+sim_500_N_mean_plot <- ggplot(sim_500_N) +
+  geom_tile(aes(x, y, fill = avg_sim_N)) +
+  coord_fixed() +
+  scale_fill_viridis_c("Priori \nexpected value", limits = c(0.3, 1.3)) +
+  labs(x = "x", y = "y") +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+sim_500_N_sd_plot <- ggplot(sim_500_N) +
+  geom_tile(aes(x, y, fill = sd_sim_N)) +
+  coord_fixed() +
+  scale_fill_viridis_c("Priori \nstandard deviation", option = "magma", limits = c(0.5, 1.2)) +
+  labs(x = "x", y = "y") +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+sim_500_N_cond_M_mean_plot <- ggplot(sim_500_N_cond_M) +
+  geom_tile(aes(x, y, fill = avg_sim_N)) +
+  coord_fixed() +
+  scale_fill_viridis_c("Posteriori \nexpected value", limits = c(0.3, 1.3)) +
+  labs(x = "x", y = "y") +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+sim_500_N_cond_M_sd_plot <- ggplot(sim_500_N_cond_M) +
+  geom_tile(aes(x, y, fill = sd_sim_N)) +
+  coord_fixed() +
+  scale_fill_viridis_c("Posteriori \nstandard deviation", option = "magma", limits = c(0.5, 1.2)) +
+  labs(x = "x", y = "y") +
+  theme(axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+        axis.title = element_text(size = 18),
+        plot.title = element_text(size = 20),
+        legend.title = element_text(size = 15),
+        legend.text = element_text(size = 14),
+        axis.line = element_line(colour = "black"),
+        axis.ticks = element_line(linewidth = 1),
+        axis.ticks.length = unit(0.3, "cm"))
+
+sim_500_N_mean_plot
+sim_500_N_sd_plot
+sim_500_N_cond_M_mean_plot
+sim_500_N_cond_M_sd_plot
+```

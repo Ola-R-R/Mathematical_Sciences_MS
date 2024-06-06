@@ -1,0 +1,9 @@
+"0","sim_100_expit_GMRF_tau_0.1_median_plot <- sim_fun_plot(nigeriaAdm1, sim_100_expit_GMRF_tau_0.1_median, c(0, 1), lab = ""Median"")
+sim_100_expit_GMRF_tau_0.1_coef_var_plot <- sim_fun_plot(nigeriaAdm1, sim_100_expit_GMRF_tau_0.1_coef_var, c(0, .4), lab = ""Coef. \nVar."")
+sim_100_expit_GMRF_tau_10_median_plot <- sim_fun_plot(nigeriaAdm1, sim_100_expit_GMRF_tau_10_median, c(0, 1), lab = ""Median"")
+sim_100_expit_GMRF_tau_10_coef_var_plot <- sim_fun_plot(nigeriaAdm1, sim_100_expit_GMRF_tau_10_coef_var, c(0, .4), lab = ""Coef. \nVar."")
+
+sim_100_expit_GMRF_tau_0.1_median_plot
+sim_100_expit_GMRF_tau_0.1_coef_var_plot
+"
+"0","sim_100_expit_GMRF_tau_10_median_plot"

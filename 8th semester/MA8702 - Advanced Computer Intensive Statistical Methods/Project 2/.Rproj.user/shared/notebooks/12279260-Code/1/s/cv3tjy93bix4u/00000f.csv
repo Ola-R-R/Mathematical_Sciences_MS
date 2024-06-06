@@ -1,0 +1,2 @@
+"0","df_linear_model <- data.frame(temp = linear_model$summary.fitted.values$""0.5quant"", rad_tilde = linear_model$.args$data$x_tilde, t = 1:n)"
+"0","df_ar1_model <- data.frame(temp = ar1_model$summary.fitted.values$""0.5quant"", rad_tilde = ar1_model$.args$data$x_tilde, t = 1:n)"

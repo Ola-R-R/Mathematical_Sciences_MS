@@ -1,0 +1,5 @@
+"0","p_hat <- plogis(DirectEstimates$Observation)"
+"0",""
+"0","p_hat_plot <- sim_fun_plot(nigeriaAdm1, p_hat, c(0, 1), lab = ""Prob."")"
+"0",""
+"0","p_hat_plot"

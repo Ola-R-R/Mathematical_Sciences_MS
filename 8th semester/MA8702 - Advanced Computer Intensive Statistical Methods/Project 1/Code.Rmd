@@ -1,0 +1,761 @@
+---
+output: 
+  html_document: 
+    fig_width: 5
+    fig_height: 5
+---
+
+```{r setup, include=FALSE}}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.align = "center",
+	message = FALSE,
+	warning = FALSE,
+	tidy = TRUE,
+	tidy.opts = list(width.cutoff = 60)
+)
+library(mnormt)
+library(MASS)
+library(ggplot2)
+library(plotly)
+library(rayshader)
+library(gridExtra)
+library(forecast)
+library(viridis)
+library(plot3D)
+```
+
+# 1 Metropolis-Hastings (MH) for bivariate densities
+
+## 1.1 Plotting
+
+```{r}
+x1 <- seq(-5, 5, .1)
+x2 <- seq(-5, 5, .1)
+
+td <- function(x, density) {
+  x <- matrix(x, ncol = 2)
+  if (density == "G") {
+    mean <- c(0, 0)
+    cov <- matrix(c(1, .9, .9, 1), nrow = 2)
+    return(dmnorm(x, mean, cov))
+  }
+  
+  if (density == "M") {
+    mean1 <- c(-1.5, -1.5)
+    mean2 <- c(1.5, 1.5)
+    mean3 <- c(-2, 2)
+    sigma12 <- 1
+    var1 <- diag(sigma12, 2, 2)
+    sigma22 <- 1
+    var2 <- diag(sigma22, 2, 2)
+    sigma32 <- .8
+    var3 <- diag(sigma32, 2, 2)
+    return((dmnorm(x, mean1, var1) + dmnorm(x, mean2, var2) + dmnorm(x, mean3, var3))/3)
+  }
+  
+  if (density == "V") {
+    return(c(1/(2*pi) * exp(-1/2 * (x[,1]^2 + x[,2]^2)) * ((x[,1]^2 + x[,2]^2) + .25)))
+  }
+}
+
+td.plot <- function(x, density) {
+  x <- matrix(x, ncol = 2, dimnames = list(NULL, c("x1", "x2")))
+  x1 <- x[,1]
+  x2 <- x[,2]
+  z <- outer(x1, x2, function(x, y) td(matrix(c(x, y), ncol = 2, ), density))
+  df <- data.frame(x1 = rep(x1, length(x2)), x2 = rep(x2, each = length(x1)), z = as.vector(z))
+  df_plot <- ggplot(df) +
+           geom_raster(aes(x1, x2, fill = z), interpolate = F) +
+           geom_contour(aes(x1, x2, z = z), color = "white", linewidth = .2, alpha = .3) +
+           coord_fixed() +
+           scale_fill_viridis_c() +
+      lims(x = c(-5, 5), y = c(-5, 5)) +
+           guides(fill = guide_colourbar("", label = F, ticks = F, barwidth = 0.5, barheight = 20)) +
+           theme(
+             axis.text = element_text(size = 25, margin = unit(0.5, "cm")),
+             axis.title = element_blank(),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+             panel.background = element_blank(),
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(),
+           )
+  return(df_plot)
+}
+
+grad.log.td <- function(x, density) {
+  x <- c(x)
+  if (density == "G") {
+    return(c(matrix(c(-1/.19, .9/.19, .9/.19, -1/.19), nrow = 2) %*% x))
+  }
+  
+  if (density == "M") {
+    mean1 <- c(-1.5, -1.5)
+    mean2 <- c(1.5, 1.5)
+    mean3 <- c(-2, 2)
+    sigma12 <- 1
+    var1 <- diag(sigma12, 2, 2)
+    sigma22 <- 1
+    var2 <- diag(sigma22, 2, 2)
+    sigma32 <- .8
+    var3 <- diag(sigma32, 2, 2)
+    return(-1/(td(x, density)) * (dmnorm(x, mean1, var1) * 1/sigma12 * (x - mean1) + dmnorm(x, mean2, var2) * 1/sigma22 * (x - mean2) + dmnorm(x, mean3, var3) * 1/sigma32 * (x - mean3))/3)
+  }
+  
+  if (density == "V") {
+    return((2/(as.numeric(t(x) %*% x) + .25) - 1) * x)
+  }
+}
+```
+
+```{r fig.width=10}
+X <- matrix(c(x1, x2), ncol = 2, dimnames = list(NULL, c("x1", "x2")))
+
+G.density.plot <- td.plot(X, "G")
+M.density.plot <- td.plot(X, "M")
+V.density.plot <- td.plot(X, "V")
+
+G.density.plot
+M.density.plot
+V.density.plot
+
+ggsave("Figs/Gaussian.png", G.density.plot, width = 25, height = 25, unit = "cm")
+ggsave("Figs/Multimodal.png", M.density.plot, width = 25, height = 25, unit = "cm")
+ggsave("Figs/Volcano.png", V.density.plot, width = 25, height = 25, unit = "cm")
+```
+
+```{r}
+plotting.MH <- function(x) {
+  trace.x1 <- ggplot(x, aes(x = iter, y = x1)) + geom_step() + ylim(-5, 5)
+  trace.x2 <- ggplot(x, aes(x = iter, y = x2)) + geom_step() + ylim(-5, 5)
+  scatter.samples <- ggplot(x) + geom_point(aes(x = x1, y = x2), size = .25) + coord_fixed() + xlim(-5, 5) + ylim(-5, 5)
+  acf.x1 <- ggAcf(x[,2], lag.max = 50) + labs(y = "ACF x1", title = NULL)
+  acf.x2 <- ggAcf(x[,3], lag.max = 50) + labs(y = "ACF x2", title = NULL)
+  grid.arrange(trace.x1, trace.x2, scatter.samples, acf.x1, acf.x2, layout_matrix = rbind(c(1, 3), c(2, 3), c(4, 5)))
+}
+
+plot.samples <- function(x, dens) {
+  scatter.samples <- dens + geom_point(aes(x = x1, y = x2), x, color = "red", size = .25) + coord_fixed() +
+      lims(x = c(-5, 5), y = c(-5, 5)) +
+           guides(fill = guide_colourbar("", label = F, ticks = F, barwidth = 0.5, barheight = 20)) +
+           theme(
+             axis.text = element_text(size = 25, margin = unit(0.5, "cm")),
+             axis.title = element_blank(),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+             panel.background = element_blank(),
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(),
+           )
+  return(scatter.samples)
+}
+
+plot.1d.accept.rate <- function(x, target) {
+  opt <- x$sigma[which.min(abs(x$accept.rate - target))]
+  accept.rate.plot <- ggplot(x) +
+    geom_step(aes(x = sigma, y = accept.rate)) +
+    # geom_hline(yintercept = target, color = "red") +
+    geom_segment(x = 0, xend = opt, y = target, yend = target, colour = "red") +
+    geom_segment(x = opt, xend = opt, y = 0, yend = target, colour = "red") +
+    geom_point(aes(x = opt, y = target), size = 2, color = "red") +
+    geom_text(aes(x = opt, y = target, label = paste("(", round(opt, 2), ",", target, ")")), size = 7, color = "red", hjust = 1.1, vjust = 1.5) +
+    ylim(0, 1) +
+    labs(x = expression(sigma), y = "Acceptance Rate") +
+    theme(
+      axis.text = element_text(size = 25, margin = unit(0.5, "cm")),
+             axis.title = element_text(size = 30),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+           )
+  return(accept.rate.plot)
+}
+
+plot.2d.accept.rate <- function(x, target) {
+  accept.rate.plot <- ggplot(x) +
+    geom_raster(aes(x = as.factor(t), y = as.factor(epsilon), fill = accept.rate), interpolate = F) +
+    scale_fill_viridis_c(limits = c(0, 1)) +
+    guides(fill = guide_colourbar(label = T, ticks = T, barwidth = 0.5, barheight = 20)) +
+    theme(text = element_text(size = 20), panel.background = element_blank()) +
+    labs(fill = "Acceptance \nRate") +
+    labs(y = expression(epsilon), x = "T") +
+    theme(
+      axis.text = element_text(size = 25, margin = unit(0.5, "cm")),
+             axis.title = element_text(size = 30),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             # legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+           )
+  return(accept.rate.plot)
+}
+
+plot.trace <- function(x) {
+  name <- colnames(x)[2]
+  colnames(x) <- c("iter", "x")
+  trace.x <- ggplot(x, aes(x = iter, y = x)) + ylab(name) + geom_step() + ylim(-5, 5) +
+    theme(
+      axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+             axis.title = element_text(size = 15),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+           )
+  return(trace.x)
+}
+
+plot.acf <- function(x) {
+  acf.x <- ggAcf(x[,2], lag.max = 50) + labs(y = paste("ACF", colnames(x)[2]), title = NULL) +
+    ylim(-.2, 1) +
+    theme(
+      axis.text = element_text(size = 15, margin = unit(0.5, "cm")),
+             axis.title = element_text(size = 15),
+             legend.title = element_text(size = 15),
+             legend.text = element_text(size = 14),
+             legend.position = "none",
+             axis.line = element_line(colour = "black"),
+             axis.ticks = element_line(linewidth = 1),
+             axis.ticks.length = unit(0.3, "cm"),
+             # axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+           )
+  return(acf.x)
+}
+```
+
+```{r}
+my.MCMC <- function(type, density, N, tuning.parameter, x0 = c(0, 0)) {
+  X <- matrix(nrow = N + 1, ncol = 3)
+  X[, 1] <- 0:N
+  X[1, -1] <- x0
+  accept <- numeric(N)
+  
+  for (i in 2:(N + 1)) {
+    x <- X[i - 1, -1]
+    
+    if (type == "RW") {
+      sigma <- tuning.parameter
+      var <- diag(sigma^2, 2, 2)
+      y <- rmnorm(1, x, var)
+      alpha <- min(1, td(y, density)/td(x, density))
+    }
+    
+    if (type == "L") {
+      sigma <- tuning.parameter
+      var <- diag(sigma^2, 2, 2)
+      meanx <- x + sigma^2/2 * grad.log.td(x, density)
+      y <- rmnorm(1, meanx, var)
+      meany <- y + sigma^2/2 * grad.log.td(y, density)
+      alpha <- min(1, (td(y, density)/td(x, density)) * (dmnorm(x, meany, var)/dmnorm(y, meanx, var)))
+    }
+    
+    if (type == "H") {
+      n.steps <- tuning.parameter[1]
+      step.size <- tuning.parameter[2]
+      p <- rmnorm(1, varcov = diag(1, 2, 2))
+      xold <- x
+      for (j in 1:(n.steps/step.size + 1)) {
+        p <- p + step.size/2 * grad.log.td(xold, density)
+        xnew <- xold + step.size * p
+        p <- p + step.size/2 * grad.log.td(xnew, density)
+        xold <- xnew
+      }
+      y <- xnew
+      alpha <- min(1, td(y, density)/td(x, density))
+    }
+
+    u <- runif(1)
+    
+    if (u <= alpha) {
+      X[i, -1] <- y
+      accept[i - 1] <- 1
+    } else {
+      X[i, -1] <- x
+      accept[i - 1] <- 0
+    }
+  }
+  accept.rate <- sum(accept)/N
+  
+  if (type == "RW" | type == "L") cat("Acceptance rate for sigma =", sigma, "is", accept.rate, "\n")
+  
+  if (type == "H") cat("Acceptance rate for T =", n.steps, "and epsilon =", step.size, "is", accept.rate, "\n")
+  
+  colnames(X) <- c("iter", "x1", "x2")
+  return(list(samples = data.frame(X), accept.rate = accept.rate))
+}
+```
+
+## 1.2 Random walk MH
+
+
+### Gaussian
+
+```{r}
+set.seed(123)
+rw.g.tuning.0.5 <- my.MCMC("RW", "G", 1e4, .5)
+set.seed(123)
+rw.g.tuning.1.3 <- my.MCMC("RW", "G", 1e4, 1.3)
+
+rw.g.accept.rates <- data.frame(sigma = seq(.1, 2, .1), accept.rate = numeric(20))
+for (i in 1:20) {
+  set.seed(123)
+  rw.g.accept.rates$accept.rate[i] <- my.MCMC("RW", "G", 1e4, rw.g.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+rw.g.accept.rates.plot <- plot.1d.accept.rate(rw.g.accept.rates, .234)
+ggsave("Figs/Problem 1/Random Walk/Gaussian/rw.g.accept.rates.plot.png", rw.g.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+rw.g.tuning.0.5.samples.plot <- plot.samples(rw.g.tuning.0.5$samples, G.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.0.5.samples.plot.png", rw.g.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+rw.g.tuning.1.3.samples.plot <- plot.samples(rw.g.tuning.1.3$samples, G.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.1.3.samples.plot.png", rw.g.tuning.1.3.samples.plot, width = 25, height = 25, unit = "cm")
+
+rw.g.tuning.0.5.trace.x1.plot <- plot.trace(rw.g.tuning.0.5$samples[c("iter", "x1")])
+rw.g.tuning.0.5.trace.x2.plot <- plot.trace(rw.g.tuning.0.5$samples[c("iter", "x2")])
+rw.g.tuning.0.5.trace.plot <- arrangeGrob(rw.g.tuning.0.5.trace.x1.plot, rw.g.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave(file = "Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.0.5.trace.plot.png", rw.g.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+rw.g.tuning.1.3.trace.x1.plot <- plot.trace(rw.g.tuning.1.3$samples[c("iter", "x1")])
+rw.g.tuning.1.3.trace.x2.plot <- plot.trace(rw.g.tuning.1.3$samples[c("iter", "x2")])
+rw.g.tuning.1.3.trace.plot <- arrangeGrob(rw.g.tuning.1.3.trace.x1.plot, rw.g.tuning.1.3.trace.x2.plot, nrow = 2)
+ggsave(file = "Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.1.3.trace.plot.png", rw.g.tuning.1.3.trace.plot, width = 25, height = 20, unit = "cm")
+
+rw.g.tuning.0.5.acf.x1.plot <- plot.acf(rw.g.tuning.0.5$samples[c("iter", "x1")])
+rw.g.tuning.0.5.acf.x2.plot <- plot.acf(rw.g.tuning.0.5$samples[c("iter", "x2")])
+rw.g.tuning.0.5.acf.plot <- arrangeGrob(rw.g.tuning.0.5.acf.x1.plot, rw.g.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave(file = "Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.0.5.acf.plot.png", rw.g.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+rw.g.tuning.1.3.acf.x1.plot <- plot.acf(rw.g.tuning.1.3$samples[c("iter", "x1")])
+rw.g.tuning.1.3.acf.x2.plot <- plot.acf(rw.g.tuning.1.3$samples[c("iter", "x2")])
+rw.g.tuning.1.3.acf.plot <- arrangeGrob(rw.g.tuning.1.3.acf.x1.plot, rw.g.tuning.1.3.acf.x2.plot, nrow = 2)
+ggsave(file = "Figs/Problem 1/Random Walk/Gaussian/rw.g.tuning.1.3.acf.plot.png", rw.g.tuning.1.3.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Multimodal
+
+```{r}
+set.seed(123)
+rw.m.tuning.0.5 <- my.MCMC("RW", "M", 1e4, .5)
+set.seed(123)
+rw.m.tuning.3.6 <- my.MCMC("RW", "M", 1e4, 3.6)
+
+rw.m.accept.rates <- data.frame(sigma = seq(.1, 4, .1), accept.rate = numeric(40))
+for (i in 1:40) {
+  set.seed(123)
+  rw.m.accept.rates$accept.rate[i] <- my.MCMC("RW", "M", 1e4, rw.m.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+rw.m.accept.rates.plot <- plot.1d.accept.rate(rw.m.accept.rates, .234)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.accept.rates.plot.png", rw.m.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+rw.m.tuning.0.5.samples.plot <- plot.samples(rw.m.tuning.0.5$samples, M.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.0.5.samples.plot.png", rw.m.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+rw.m.tuning.3.6.samples.plot <- plot.samples(rw.m.tuning.3.6$samples, M.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.3.6.samples.plot.png", rw.m.tuning.3.6.samples.plot, width = 25, height = 25, unit = "cm")
+
+rw.m.tuning.0.5.trace.x1.plot <- plot.trace(rw.m.tuning.0.5$samples[c("iter", "x1")])
+rw.m.tuning.0.5.trace.x2.plot <- plot.trace(rw.m.tuning.0.5$samples[c("iter", "x2")])
+rw.m.tuning.0.5.trace.plot <- arrangeGrob(rw.m.tuning.0.5.trace.x1.plot, rw.m.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.0.5.trace.plot.png", rw.m.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+rw.m.tuning.3.6.trace.x1.plot <- plot.trace(rw.m.tuning.3.6$samples[c("iter", "x1")])
+rw.m.tuning.3.6.trace.x2.plot <- plot.trace(rw.m.tuning.3.6$samples[c("iter", "x2")])
+rw.m.tuning.3.6.trace.plot <- arrangeGrob(rw.m.tuning.3.6.trace.x1.plot, rw.m.tuning.3.6.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.3.6.trace.plot.png", rw.m.tuning.3.6.trace.plot, width = 25, height = 20, unit = "cm")
+
+rw.m.tuning.0.5.acf.x1.plot <- plot.acf(rw.m.tuning.0.5$samples[c("iter", "x1")])
+rw.m.tuning.0.5.acf.x2.plot <- plot.acf(rw.m.tuning.0.5$samples[c("iter", "x2")])
+rw.m.tuning.0.5.acf.plot <- arrangeGrob(rw.m.tuning.0.5.acf.x1.plot, rw.m.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.0.5.acf.plot.png", rw.m.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+rw.m.tuning.3.6.acf.x1.plot <- plot.acf(rw.m.tuning.3.6$samples[c("iter", "x1")])
+rw.m.tuning.3.6.acf.x2.plot <- plot.acf(rw.m.tuning.3.6$samples[c("iter", "x2")])
+rw.m.tuning.3.6.acf.plot <- arrangeGrob(rw.m.tuning.3.6.acf.x1.plot, rw.m.tuning.3.6.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Multimodal/rw.m.tuning.3.6.acf.plot.png", rw.m.tuning.3.6.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Volcano
+
+```{r}
+set.seed(123)
+rw.v.tuning.0.5 <- my.MCMC("RW", "V", 1e4, .5)
+set.seed(123)
+rw.v.tuning.3.2 <- my.MCMC("RW", "V", 1e4, 3.2)
+
+rw.v.accept.rates <- data.frame(sigma = seq(.1, 4, .1), accept.rate = numeric(40))
+for (i in 1:40) {
+  set.seed(123)
+  rw.v.accept.rates$accept.rate[i] <- my.MCMC("RW", "V", 1e4, rw.v.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+rw.v.accept.rates.plot <- plot.1d.accept.rate(rw.v.accept.rates, .234)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.accept.rates.plot.png", rw.v.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+rw.v.tuning.0.5.samples.plot <- plot.samples(rw.v.tuning.0.5$samples, V.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.0.5.samples.plot.png", rw.v.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+rw.v.tuning.3.2.samples.plot <- plot.samples(rw.v.tuning.3.2$samples, V.density.plot)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.3.2.samples.plot.png", rw.v.tuning.3.2.samples.plot, width = 25, height = 25, unit = "cm")
+
+rw.v.tuning.0.5.trace.x1.plot <- plot.trace(rw.v.tuning.0.5$samples[c("iter", "x1")])
+rw.v.tuning.0.5.trace.x2.plot <- plot.trace(rw.v.tuning.0.5$samples[c("iter", "x2")])
+rw.v.tuning.0.5.trace.plot <- arrangeGrob(rw.v.tuning.0.5.trace.x1.plot, rw.v.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.0.5.trace.plot.png", rw.v.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+rw.v.tuning.3.2.trace.x1.plot <- plot.trace(rw.v.tuning.3.2$samples[c("iter", "x1")])
+rw.v.tuning.3.2.trace.x2.plot <- plot.trace(rw.v.tuning.3.2$samples[c("iter", "x2")])
+rw.v.tuning.3.2.trace.plot <- arrangeGrob(rw.v.tuning.3.2.trace.x1.plot, rw.v.tuning.3.2.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.3.2.trace.plot.png", rw.v.tuning.3.2.trace.plot, width = 25, height = 20, unit = "cm")
+
+rw.v.tuning.0.5.acf.x1.plot <- plot.acf(rw.v.tuning.0.5$samples[c("iter", "x1")])
+rw.v.tuning.0.5.acf.x2.plot <- plot.acf(rw.v.tuning.0.5$samples[c("iter", "x2")])
+rw.v.tuning.0.5.acf.plot <- arrangeGrob(rw.v.tuning.0.5.acf.x1.plot, rw.v.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.0.5.acf.plot.png", rw.v.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+rw.v.tuning.3.2.acf.x1.plot <- plot.acf(rw.v.tuning.3.2$samples[c("iter", "x1")])
+rw.v.tuning.3.2.acf.x2.plot <- plot.acf(rw.v.tuning.3.2$samples[c("iter", "x2")])
+rw.v.tuning.3.2.acf.plot <- arrangeGrob(rw.v.tuning.3.2.acf.x1.plot, rw.v.tuning.3.2.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Random Walk/Volcano/rw.v.tuning.3.2.acf.plot.png", rw.v.tuning.3.2.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+## 1.3 Langevin MH
+
+### Gaussian
+
+```{r}
+set.seed(123)
+l.g.tuning.0.5 <- my.MCMC("L", "G", 1e4, .5)
+set.seed(123)
+l.g.tuning.0.6 <- my.MCMC("L", "G", 1e4, .6)
+
+l.g.accept.rates <- data.frame(sigma = seq(.1, 1, .1), accept.rate = numeric(10))
+for (i in 1:10) {
+  set.seed(123)
+  l.g.accept.rates$accept.rate[i] <- my.MCMC("L", "G", 1e4, l.g.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+l.g.accept.rates.plot <- plot.1d.accept.rate(l.g.accept.rates, .57)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.accept.rates.plot.png", l.g.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+l.g.tuning.0.5.samples.plot <- plot.samples(l.g.tuning.0.5$samples, G.density.plot)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.5.samples.plot.png", l.g.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+l.g.tuning.0.6.samples.plot <- plot.samples(l.g.tuning.0.6$samples, G.density.plot)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.6.samples.plot.png", l.g.tuning.0.6.samples.plot, width = 25, height = 25, unit = "cm")
+
+l.g.tuning.0.5.trace.x1.plot <- plot.trace(l.g.tuning.0.5$samples[c("iter", "x1")])
+l.g.tuning.0.5.trace.x2.plot <- plot.trace(l.g.tuning.0.5$samples[c("iter", "x2")])
+l.g.tuning.0.5.trace.plot <- arrangeGrob(l.g.tuning.0.5.trace.x1.plot, l.g.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.5.trace.plot.png", l.g.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+l.g.tuning.0.6.trace.x1.plot <- plot.trace(l.g.tuning.0.6$samples[c("iter", "x1")])
+l.g.tuning.0.6.trace.x2.plot <- plot.trace(l.g.tuning.0.6$samples[c("iter", "x2")])
+l.g.tuning.0.6.trace.plot <- arrangeGrob(l.g.tuning.0.6.trace.x1.plot, l.g.tuning.0.6.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.6.trace.plot.png", l.g.tuning.0.6.trace.plot, width = 25, height = 20, unit = "cm")
+
+l.g.tuning.0.5.acf.x1.plot <- plot.acf(l.g.tuning.0.5$samples[c("iter", "x1")])
+l.g.tuning.0.5.acf.x2.plot <- plot.acf(l.g.tuning.0.5$samples[c("iter", "x2")])
+l.g.tuning.0.5.acf.plot <- arrangeGrob(l.g.tuning.0.5.acf.x1.plot, l.g.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.5.acf.plot.png", l.g.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+l.g.tuning.0.6.acf.x1.plot <- plot.acf(l.g.tuning.0.6$samples[c("iter", "x1")])
+l.g.tuning.0.6.acf.x2.plot <- plot.acf(l.g.tuning.0.6$samples[c("iter", "x2")])
+l.g.tuning.0.6.acf.plot <- arrangeGrob(l.g.tuning.0.6.acf.x1.plot, l.g.tuning.0.6.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Gaussian/l.g.tuning.0.6.acf.plot.png", l.g.tuning.0.6.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Multimodal
+
+```{r}
+set.seed(123)
+l.m.tuning.0.5 <- my.MCMC("L", "M", 1e4, .5)
+set.seed(123)
+l.m.tuning.1.6 <- my.MCMC("L", "M", 1e4, 1.6)
+
+l.m.accept.rates <- data.frame(sigma = seq(.1, 2, .1), accept.rate = numeric(20))
+for (i in 1:20) {
+  set.seed(123)
+  l.m.accept.rates$accept.rate[i] <- my.MCMC("L", "M", 1e4, l.m.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+l.m.accept.rates.plot <- plot.1d.accept.rate(l.m.accept.rates, .57)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.accept.rates.plot.png", l.m.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+l.m.tuning.0.5.samples.plot <- plot.samples(l.m.tuning.0.5$samples, M.density.plot)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.0.5.samples.plot.png", l.m.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+l.m.tuning.1.6.samples.plot <- plot.samples(l.m.tuning.1.6$samples, M.density.plot)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.1.6.samples.plot.png", l.m.tuning.1.6.samples.plot, width = 25, height = 25, unit = "cm")
+
+l.m.tuning.0.5.trace.x1.plot <- plot.trace(l.m.tuning.0.5$samples[c("iter", "x1")])
+l.m.tuning.0.5.trace.x2.plot <- plot.trace(l.m.tuning.0.5$samples[c("iter", "x2")])
+l.m.tuning.0.5.trace.plot <- arrangeGrob(l.m.tuning.0.5.trace.x1.plot, l.m.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.0.5.trace.plot.png", l.m.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+l.m.tuning.1.6.trace.x1.plot <- plot.trace(l.m.tuning.1.6$samples[c("iter", "x1")])
+l.m.tuning.1.6.trace.x2.plot <- plot.trace(l.m.tuning.1.6$samples[c("iter", "x2")])
+l.m.tuning.1.6.trace.plot <- arrangeGrob(l.m.tuning.1.6.trace.x1.plot, l.m.tuning.1.6.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.1.6.trace.plot.png", l.m.tuning.1.6.trace.plot, width = 25, height = 20, unit = "cm")
+
+l.m.tuning.0.5.acf.x1.plot <- plot.acf(l.m.tuning.0.5$samples[c("iter", "x1")])
+l.m.tuning.0.5.acf.x2.plot <- plot.acf(l.m.tuning.0.5$samples[c("iter", "x2")])
+l.m.tuning.0.5.acf.plot <- arrangeGrob(l.m.tuning.0.5.acf.x1.plot, l.m.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.0.5.acf.plot.png", l.m.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+l.m.tuning.1.6.acf.x1.plot <- plot.acf(l.m.tuning.1.6$samples[c("iter", "x1")])
+l.m.tuning.1.6.acf.x2.plot <- plot.acf(l.m.tuning.1.6$samples[c("iter", "x2")])
+l.m.tuning.1.6.acf.plot <- arrangeGrob(l.m.tuning.1.6.acf.x1.plot, l.m.tuning.1.6.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Multimodal/l.m.tuning.1.6.acf.plot.png", l.m.tuning.1.6.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Volcano
+
+```{r}
+set.seed(123)
+l.v.tuning.0.5 <- my.MCMC("L", "V", 1e4, .5)
+set.seed(123)
+l.v.tuning.1.7 <- my.MCMC("L", "V", 1e4, 1.7)
+
+l.v.accept.rates <- data.frame(sigma = seq(.1, 2, .1), accept.rate = numeric(20))
+for (i in 1:20) {
+  set.seed(123)
+  l.v.accept.rates$accept.rate[i] <- my.MCMC("L", "V", 1e4, l.v.accept.rates$sigma[i])$accept.rate
+}
+```
+
+```{r}
+l.v.accept.rates.plot <- plot.1d.accept.rate(l.v.accept.rates, .57)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.accept.rates.plot.png", l.v.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+l.v.tuning.0.5.samples.plot <- plot.samples(l.v.tuning.0.5$samples, V.density.plot)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.0.5.samples.plot.png", l.v.tuning.0.5.samples.plot, width = 25, height = 25, unit = "cm")
+l.v.tuning.1.7.samples.plot <- plot.samples(l.v.tuning.1.7$samples, V.density.plot)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.1.7.samples.plot.png", l.v.tuning.1.7.samples.plot, width = 25, height = 25, unit = "cm")
+
+l.v.tuning.0.5.trace.x1.plot <- plot.trace(l.v.tuning.0.5$samples[c("iter", "x1")])
+l.v.tuning.0.5.trace.x2.plot <- plot.trace(l.v.tuning.0.5$samples[c("iter", "x2")])
+l.v.tuning.0.5.trace.plot <- arrangeGrob(l.v.tuning.0.5.trace.x1.plot, l.v.tuning.0.5.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.0.5.trace.plot.png", l.v.tuning.0.5.trace.plot, width = 25, height = 20, unit = "cm")
+l.v.tuning.1.7.trace.x1.plot <- plot.trace(l.v.tuning.1.7$samples[c("iter", "x1")])
+l.v.tuning.1.7.trace.x2.plot <- plot.trace(l.v.tuning.1.7$samples[c("iter", "x2")])
+l.v.tuning.1.7.trace.plot <- arrangeGrob(l.v.tuning.1.7.trace.x1.plot, l.v.tuning.1.7.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.1.7.trace.plot.png", l.v.tuning.1.7.trace.plot, width = 25, height = 20, unit = "cm")
+
+l.v.tuning.0.5.acf.x1.plot <- plot.acf(l.v.tuning.0.5$samples[c("iter", "x1")])
+l.v.tuning.0.5.acf.x2.plot <- plot.acf(l.v.tuning.0.5$samples[c("iter", "x2")])
+l.v.tuning.0.5.acf.plot <- arrangeGrob(l.v.tuning.0.5.acf.x1.plot, l.v.tuning.0.5.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.0.5.acf.plot.png", l.v.tuning.0.5.acf.plot, width = 25, height = 20, unit = "cm")
+l.v.tuning.1.7.acf.x1.plot <- plot.acf(l.v.tuning.1.7$samples[c("iter", "x1")])
+l.v.tuning.1.7.acf.x2.plot <- plot.acf(l.v.tuning.1.7$samples[c("iter", "x2")])
+l.v.tuning.1.7.acf.plot <- arrangeGrob(l.v.tuning.1.7.acf.x1.plot, l.v.tuning.1.7.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Langevin/Volcano/l.v.tuning.1.7.acf.plot.png", l.v.tuning.1.7.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+## 1.4 Hamiltonian MH
+
+### Gaussian
+
+```{r}
+set.seed(123)
+h.g.tuning.10_0.1 <- my.MCMC("H", "G", 1e4, c(10, .1))
+set.seed(123)
+h.g.tuning.10_0.05 <- my.MCMC("H", "G", 1e4, c(10, .05))
+
+h.g.fixed.T.10.accept.rates <- data.frame(t = 10, epsilon = seq(0.01, 0.1, 0.01), accept.rate = 0)
+for (i in 1:10) {
+  set.seed(123)
+  h.g.fixed.T.10.accept.rates$accept.rate[i] <- my.MCMC("H", "G", 1e4, c(h.g.fixed.T.10.accept.rates$t[i], h.g.fixed.T.10.accept.rates$epsilon[i]))$accept.rate
+}
+
+h.g.accept.rates <- data.frame(t = rep(1:10, each = 20), epsilon = seq(.05, 1, .05), accept.rate = 0)
+for (i in 1:200) {
+  set.seed(123)
+  h.g.accept.rates$accept.rate[i] <- my.MCMC("H", "G", 1e3, c(h.g.accept.rates$t[i], h.g.accept.rates$epsilon[i]))$accept.rate
+}
+
+# h.g.accept.rates <- data.frame(t = rep(1:20, each = 20), epsilon = seq(.05, 1, .05), accept.rate = numeric(400))
+# for (i in 1:400) {
+#   set.seed(123)
+#   h.g.accept.rates$accept.rate[i] <- my.MCMC("H", "G", 1e4, c(h.g.accept.rates$t[i], h.g.accept.rates$epsilon[i]))$accept.rate
+# }
+```
+
+```{r}
+h.g.fixed.T.10.accept.rates.plot <- plot.2d.accept.rate(h.g.fixed.T.10.accept.rates, 0.8)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.fixed.T.10.accept.rates.plot.png", h.g.fixed.T.10.accept.rates.plot, width = 25, height = 20, unit = "cm")
+h.g.accept.rates.plot <- plot.2d.accept.rate(h.g.accept.rates, 0.8)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.accept.rates.plot.png", h.g.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+h.g.tuning.10_0.1.samples.plot <- plot.samples(h.g.tuning.10_0.1$samples, G.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.1.samples.plot.png", h.g.tuning.10_0.1.samples.plot, width = 25, height = 25, unit = "cm")
+h.g.tuning.10_0.05.samples.plot <- plot.samples(h.g.tuning.10_0.05$samples, G.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.05.samples.plot.png", h.g.tuning.10_0.05.samples.plot, width = 25, height = 25, unit = "cm")
+
+h.g.tuning.10_0.1.trace.x1.plot <- plot.trace(h.g.tuning.10_0.1$samples[c("iter", "x1")])
+h.g.tuning.10_0.1.trace.x2.plot <- plot.trace(h.g.tuning.10_0.1$samples[c("iter", "x2")])
+h.g.tuning.10_0.1.trace.plot <- arrangeGrob(h.g.tuning.10_0.1.trace.x1.plot, h.g.tuning.10_0.1.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.1.trace.plot.png", h.g.tuning.10_0.1.trace.plot, width = 25, height = 20, unit = "cm")
+h.g.tuning.10_0.05.trace.x1.plot <- plot.trace(h.g.tuning.10_0.05$samples[c("iter", "x1")])
+h.g.tuning.10_0.05.trace.x2.plot <- plot.trace(h.g.tuning.10_0.05$samples[c("iter", "x2")])
+h.g.tuning.10_0.05.trace.plot <- arrangeGrob(h.g.tuning.10_0.05.trace.x1.plot, h.g.tuning.10_0.05.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.05.trace.plot.png", h.g.tuning.10_0.05.trace.plot, width = 25, height = 20, unit = "cm")
+
+h.g.tuning.10_0.1.acf.x1.plot <- plot.acf(h.g.tuning.10_0.1$samples[c("iter", "x1")])
+h.g.tuning.10_0.1.acf.x2.plot <- plot.acf(h.g.tuning.10_0.1$samples[c("iter", "x2")])
+h.g.tuning.10_0.1.acf.plot <- arrangeGrob(h.g.tuning.10_0.1.acf.x1.plot, h.g.tuning.10_0.1.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.1.acf.plot.png", h.g.tuning.10_0.1.acf.plot, width = 25, height = 20, unit = "cm")
+h.g.tuning.10_0.05.acf.x1.plot <- plot.acf(h.g.tuning.10_0.05$samples[c("iter", "x1")])
+h.g.tuning.10_0.05.acf.x2.plot <- plot.acf(h.g.tuning.10_0.05$samples[c("iter", "x2")])
+h.g.tuning.10_0.05.acf.plot <- arrangeGrob(h.g.tuning.10_0.05.acf.x1.plot, h.g.tuning.10_0.05.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Gaussian/h.g.tuning.10_0.05.acf.plot.png", h.g.tuning.10_0.05.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Multimodal
+
+```{r}
+set.seed(123)
+h.m.tuning.10_0.1 <- my.MCMC("H", "M", 1e4, c(10, .1))
+set.seed(123)
+h.m.tuning.10_0.05 <- my.MCMC("H", "M", 1e4, c(10, .05))
+
+h.m.accept.rates <- data.frame(t = rep(1:10, each = 20), epsilon = seq(.05, 1, .05), accept.rate = 0)
+for (i in 1:200) {
+  set.seed(123)
+  h.m.accept.rates$accept.rate[i] <- my.MCMC("H", "M", 1e3, c(h.m.accept.rates$t[i], h.m.accept.rates$epsilon[i]))$accept.rate
+}
+```
+
+```{r}
+h.m.accept.rates.plot <- plot.2d.accept.rate(h.m.accept.rates, 0.8)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.accept.rates.plot.png", h.m.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+h.m.tuning.10_0.1.samples.plot <- plot.samples(h.m.tuning.10_0.1$samples, M.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.1.samples.plot.png", h.m.tuning.10_0.1.samples.plot, width = 25, height = 25, unit = "cm")
+h.m.tuning.10_0.05.samples.plot <- plot.samples(h.m.tuning.10_0.05$samples, M.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.05.samples.plot.png", h.m.tuning.10_0.05.samples.plot, width = 25, height = 25, unit = "cm")
+
+h.m.tuning.10_0.1.trace.x1.plot <- plot.trace(h.m.tuning.10_0.1$samples[c("iter", "x1")])
+h.m.tuning.10_0.1.trace.x2.plot <- plot.trace(h.m.tuning.10_0.1$samples[c("iter", "x2")])
+h.m.tuning.10_0.1.trace.plot <- arrangeGrob(h.m.tuning.10_0.1.trace.x1.plot, h.m.tuning.10_0.1.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.1.trace.plot.png", h.m.tuning.10_0.1.trace.plot, width = 25, height = 20, unit = "cm")
+h.m.tuning.10_0.05.trace.x1.plot <- plot.trace(h.m.tuning.10_0.05$samples[c("iter", "x1")])
+h.m.tuning.10_0.05.trace.x2.plot <- plot.trace(h.m.tuning.10_0.05$samples[c("iter", "x2")])
+h.m.tuning.10_0.05.trace.plot <- arrangeGrob(h.m.tuning.10_0.05.trace.x1.plot, h.m.tuning.10_0.05.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.05.trace.plot.png", h.m.tuning.10_0.05.trace.plot, width = 25, height = 20, unit = "cm")
+
+h.m.tuning.10_0.1.acf.x1.plot <- plot.acf(h.m.tuning.10_0.1$samples[c("iter", "x1")])
+h.m.tuning.10_0.1.acf.x2.plot <- plot.acf(h.m.tuning.10_0.1$samples[c("iter", "x2")])
+h.m.tuning.10_0.1.acf.plot <- arrangeGrob(h.m.tuning.10_0.1.acf.x1.plot, h.m.tuning.10_0.1.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.1.acf.plot.png", h.m.tuning.10_0.1.acf.plot, width = 25, height = 20, unit = "cm")
+h.m.tuning.10_0.05.acf.x1.plot <- plot.acf(h.m.tuning.10_0.05$samples[c("iter", "x1")])
+h.m.tuning.10_0.05.acf.x2.plot <- plot.acf(h.m.tuning.10_0.05$samples[c("iter", "x2")])
+h.m.tuning.10_0.05.acf.plot <- arrangeGrob(h.m.tuning.10_0.05.acf.x1.plot, h.m.tuning.10_0.05.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Multimodal/h.m.tuning.10_0.05.acf.plot.png", h.m.tuning.10_0.05.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+### Volcano
+
+```{r}
+set.seed(123)
+h.v.tuning.10_0.1 <- my.MCMC("H", "V", 1e4, c(10, .1))
+set.seed(123)
+h.v.tuning.10_0.05 <- my.MCMC("H", "V", 1e4, c(10, .05))
+
+h.v.accept.rates <- data.frame(t = rep(1:10, each = 20), epsilon = seq(.05, 1, .05), accept.rate = 0)
+for (i in 1:200) {
+  set.seed(123)
+  h.v.accept.rates$accept.rate[i] <- my.MCMC("H", "V", 1e3, c(h.v.accept.rates$t[i], h.v.accept.rates$epsilon[i]))$accept.rate
+}
+```
+
+```{r}
+h.v.accept.rates.plot <- plot.2d.accept.rate(h.v.accept.rates, 0.8)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.accept.rates.plot.png", h.v.accept.rates.plot, width = 25, height = 20, unit = "cm")
+
+h.v.tuning.10_0.1.samples.plot <- plot.samples(h.v.tuning.10_0.1$samples, V.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.1.samples.plot.png", h.v.tuning.10_0.1.samples.plot, width = 25, height = 25, unit = "cm")
+h.v.tuning.10_0.05.samples.plot <- plot.samples(h.v.tuning.10_0.05$samples, V.density.plot)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.05.samples.plot.png", h.v.tuning.10_0.05.samples.plot, width = 25, height = 25, unit = "cm")
+
+h.v.tuning.10_0.1.trace.x1.plot <- plot.trace(h.v.tuning.10_0.1$samples[c("iter", "x1")])
+h.v.tuning.10_0.1.trace.x2.plot <- plot.trace(h.v.tuning.10_0.1$samples[c("iter", "x2")])
+h.v.tuning.10_0.1.trace.plot <- arrangeGrob(h.v.tuning.10_0.1.trace.x1.plot, h.v.tuning.10_0.1.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.1.trace.plot.png", h.v.tuning.10_0.1.trace.plot, width = 25, height = 20, unit = "cm")
+h.v.tuning.10_0.05.trace.x1.plot <- plot.trace(h.v.tuning.10_0.05$samples[c("iter", "x1")])
+h.v.tuning.10_0.05.trace.x2.plot <- plot.trace(h.v.tuning.10_0.05$samples[c("iter", "x2")])
+h.v.tuning.10_0.05.trace.plot <- arrangeGrob(h.v.tuning.10_0.05.trace.x1.plot, h.v.tuning.10_0.05.trace.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.05.trace.plot.png", h.v.tuning.10_0.05.trace.plot, width = 25, height = 20, unit = "cm")
+
+h.v.tuning.10_0.1.acf.x1.plot <- plot.acf(h.v.tuning.10_0.1$samples[c("iter", "x1")])
+h.v.tuning.10_0.1.acf.x2.plot <- plot.acf(h.v.tuning.10_0.1$samples[c("iter", "x2")])
+h.v.tuning.10_0.1.acf.plot <- arrangeGrob(h.v.tuning.10_0.1.acf.x1.plot, h.v.tuning.10_0.1.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.1.acf.plot.png", h.v.tuning.10_0.1.acf.plot, width = 25, height = 20, unit = "cm")
+h.v.tuning.10_0.05.acf.x1.plot <- plot.acf(h.v.tuning.10_0.05$samples[c("iter", "x1")])
+h.v.tuning.10_0.05.acf.x2.plot <- plot.acf(h.v.tuning.10_0.05$samples[c("iter", "x2")])
+h.v.tuning.10_0.05.acf.plot <- arrangeGrob(h.v.tuning.10_0.05.acf.x1.plot, h.v.tuning.10_0.05.acf.x2.plot, nrow = 2)
+ggsave("Figs/Problem 1/Hamiltonian/Volcano/h.v.tuning.10_0.05.acf.plot.png", h.v.tuning.10_0.05.acf.plot, width = 25, height = 20, unit = "cm")
+```
+
+
+# 2 RStan: Gamma-Poisson Hierarchical model
+
+```{r fig.height=7}
+library(rstan)
+library(bayesplot)
+library(rstudioapi)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+
+pump_data <- list(
+  Pump = 10,
+  y = c(5,  1, 5,  14, 3,  19, 1, 1, 4, 22),
+  t = c(94.3, 15.7, 62.9, 126.0, 5.24, 31.4, 1.05, 1.05, 2.1, 10.5)
+)
+
+fit <- stan(
+  file = "pump.stan",
+  data = pump_data,
+  chains = 10,
+  warmup = 1000,
+  iter = 2000,
+  refresh = 1000,
+  seed = 123
+)
+
+print(fit)
+```
+
+```{r fig.height=7}
+summary(fit)$summary
+
+stan_hist(fit, pars = "lp__", bins = 30)
+
+plot(fit, "trace", pars = "alpha")
+
+plot(fit, pars = c("alpha", "lp__"), prob = 0.5, prob_outer = 0.9)
+
+pairs(fit, pars = c("lp__"), condition = "accept_stat__")
+
+traceplot.All <- traceplot(fit, pars = c("lambda", "lambdat", "alpha", "beta", "lp__"), inc_warmup = T, ncol = 5)
+
+ggsave("Figs/Problem 2/pump.traceplot.All.png", traceplot.All, width = 25, height = 18, unit = "cm")
+```
+

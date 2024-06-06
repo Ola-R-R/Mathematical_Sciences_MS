@@ -1,0 +1,3 @@
+df <- data.frame(kunde = 1:10, PD = runif(10), LGD = runif(10, 10000, 100000))
+
+df[sample(10, 100, replace = T, prob = df$PD),]

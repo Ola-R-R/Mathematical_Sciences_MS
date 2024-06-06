@@ -1,0 +1,151 @@
+---
+title: "Exercise 1"
+author: "Ola Rasmussen"
+output: 
+  pdf_document: 
+    toc: yes
+    fig_caption: yes
+    number_sections: yes
+    fig_width: 10
+    fig_height: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, fig.align = 'center')
+library(tidyverse)
+
+theme_update(plot.title = element_text(hjust = 0.5))
+```
+
+\newpage
+
+# Problem 1
+
+We have a linear process given by
+
+$$
+\tag{Model 1.1}
+\begin{aligned}
+  x_{t+1} = w_t + w_{t-1}, \ \ x_1 = 0, \ \ w_t \overset{i.i.d.}{\sim} \mathcal{N}(0,1).
+\end{aligned}
+$$
+
+```{r}
+problem1_fun <- function(t) {
+  set.seed(97)
+  x <- 0
+  w <- c(0, rnorm(t))
+  for (i in 1:t+1) {
+    x[i] <- w[i] + w[i-1]
+  }
+  return(x)
+}
+x_50 <- problem1_fun(50)
+```
+
+```{r echo = F}
+x_50_df <- data.frame("t" = 0:(length(x_50)-1), "x" = x_50)
+ggplot(x_50_df, aes(t,x)) +
+  ggtitle("50 timesteps of Model 1.1") +
+  geom_line() +
+  ylim(-max(abs(x_50_df$x)), max(abs(x_50_df$x)))
+```
+
+\newpage
+
+The theoretical autocorrelation function for a linear process is given by
+
+$$
+\begin{aligned}
+  \rho(h) &= \frac{\gamma(h)}{\gamma(0)},\\
+  \gamma(h) &= \sigma_w^2 \sum_{j=-\infty}^\infty \psi_{j+h}\psi_j.
+\end{aligned}
+$$
+
+In our case, $\sigma_w^2 = 1$, $\psi_i=1, \ \ i=1,2$. Then
+
+$$
+\begin{aligned}
+  \gamma(h) = \left\{\begin{array}{lr}
+    2, & |h| = 0\\
+    1, & |h| = 1\\
+    0, & |h| \geq 2
+  \end{array}\right.
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+  \rho(h) = \left\{\begin{array}{lr}
+    1, & |h| = 0\\
+    \frac{1}{2}, & |h| = 1\\
+    0, & |h| \geq 2
+  \end{array}\right.
+\end{aligned}
+$$
+
+```{r theoretical, echo = F}
+lag <- 0:10
+theoretical_acf <- c(1,1/2,rep(0,9))
+lags_theoretical_acf_df <- data.frame("lag" = lag, "acf" = theoretical_acf)
+
+ggplot(lags_theoretical_acf_df, aes(lag,acf)) +
+  ggtitle("Theoretical ACF of Model 1.1") +
+  geom_hline(aes(yintercept = 0)) +
+  geom_segment(mapping = aes(xend = lag, yend = 0)) +
+  ylim(0, max(lags_theoretical_acf_df$acf))
+```
+
+\newpage
+
+The sample autocorrelation function is given by
+
+$$
+\begin{aligned}
+  \hat\rho(h) &= \frac{\hat\gamma(h)}{\hat\gamma(0)},\\
+  \hat\gamma(h) &= n^{-1} \sum_{t=1}^{n-h}(x_{t+h} - \bar x)(x_t - \bar x).
+\end{aligned}
+$$
+
+```{r sample}
+sample_acf <- function(x,h) {
+  s_acovf <- vector()
+  x_mean <- mean(x)
+  n <- length(x)
+  lag <- 0:h
+  for (i in lag) {
+    summ <- vector()
+    for (j in 1:(n - i)) {summ[j] <- (x[j + i] - x_mean) * (x[j] - x_mean)}
+    s_acovf[i+1] <- n^(-1) * sum(summ)
+  }
+  s_acf <- s_acovf/s_acovf[1]
+  
+  return(s_acf)
+}
+s_acf_50 <- sample_acf(x_50,10)
+```
+
+```{r plot_sample, echo = F}
+s_acf_50_df <- data.frame("lag" = 1:length(s_acf_50)-1, "acf" = s_acf_50)
+
+ggplot(s_acf_50_df, aes(lag,acf)) +
+  ggtitle("Sample ACF of Model 1.1") +
+  geom_hline(aes(yintercept = 0)) +
+  geom_segment(mapping = aes(xend = lag, yend = 0)) +
+  ylim(min(s_acf_50_df$acf), 1.25)
+```
+
+\newpage
+
+In our case $n=50$, so $\sigma_{\hat\rho_x}\left(h\right) = \frac{1}{\sqrt{n}} = \frac{1}{\sqrt{50}}$. Property 1.2 says that with large $n$, the sample ACF will be approximately normally distributed for fixed $H$, where $h = 1, 2, \dots, H$, with zero mean and standard deviation $\sigma_{\hat\rho_x}\left(h\right)$. We can see in the peaks that they seem to follow this distribution fro lag larger than $1$.
+
+```{r plot_sample_prop_1_2, echo = F}
+s_acf_50_df <- data.frame("lag" = 1:length(s_acf_50)-1, "acf" = s_acf_50)
+
+ggplot(s_acf_50_df, aes(lag,acf)) +
+  ggtitle("Sample ACF of Model 1.1 with ") +
+  geom_hline(aes(yintercept = 0)) +
+  geom_segment(mapping = aes(xend = lag, yend = 0)) +
+  ylim(min(s_acf_50_df$acf), 1.25)
+```
+

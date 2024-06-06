@@ -1,0 +1,5 @@
+"0",""
+"0","# ggsave(""Figs/Problem 1/c)/admin2_tau_1_sim_seed_1_plot.png"", admin2_tau_1_sim_seed_1_plot, width = 25, height = 20, unit = ""cm"")"
+"0","# ggsave(""Figs/Problem 1/c)/admin2_tau_1_sim_seed_2_plot.png"", admin2_tau_1_sim_seed_2_plot, width = 25, height = 20, unit = ""cm"")"
+"0","# ggsave(""Figs/Problem 1/c)/mv_gaussian_dim_775_mean_0_cov_1_seed_1_plot.png"", mv_gaussian_dim_775_mean_0_cov_1_seed_1_plot, width = 25, height = 20, unit = ""cm"")"
+"0","# ggsave(""Figs/Problem 1/c)/mv_gaussian_dim_775_mean_0_cov_1_seed_2_plot.png"", mv_gaussian_dim_775_mean_0_cov_1_seed_2_plot, width = 25, height = 20, unit = ""cm"")"
